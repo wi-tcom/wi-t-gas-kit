@@ -25,6 +25,9 @@ WitGas.runlog = (function () {
   var MAX_ERROR_TYPE_LENGTH = 50;
   var MAX_MESSAGE_LENGTH = 100;
   var DATE_FORMAT = 'yyyy-mm-dd hh:mm:ss';
+  // 見出しを作るときの列幅（ピクセル）。開始・終了は日時が切れずに見える幅（実機確認 W2）
+  var COLUMN_WIDTHS = [150, 150, 160, 80, 60, 120, 300];
+  var LOG_PREFIX = '[WitGas.runlog] ';
 
   /**
    * 1 行足す。
@@ -43,7 +46,12 @@ WitGas.runlog = (function () {
    * @param {Object} [opts.spreadsheet] 書くスプレッドシート（spreadsheetId の代わり）
    * @param {string} [opts.sheetName='実行記録']
    * @param {number} [opts.maxRows=5000] 残す行数の上限（見出しを除く）
-   * @return {{row: number, trimmed: number}} 書いた行の番号と、消した古い行の数
+   * @param {boolean} [opts.matchTimeZone=false] 実行記録のシートを新しく作るとき（空のとき）、
+   *     記録先のタイムゾーンがスクリプトと違えば、記録先をスクリプトのタイムゾーンに合わせる
+   *     （先方のファイルの設定を変えるので、既定はオフ）
+   * @return {{row: number, trimmed: number, timeZoneMismatch: boolean, timeZoneChanged: boolean}}
+   *     書いた行の番号、消した古い行の数、記録先とスクリプトのタイムゾーンが違ったまま書いたか、
+   *     記録先のタイムゾーンを合わせたか
    */
   function append(entry, opts) {
     var row = toRow_(entry);
@@ -51,7 +59,12 @@ WitGas.runlog = (function () {
     var cfg = checkOptions_(opts, 'append');
     var maxRows = cfg.maxRows;
 
-    var sheet = getSheet_(openSpreadsheet_(opts), cfg.sheetName);
+    var ss = openSpreadsheet_(opts);
+    var existing = ss.getSheetByName(cfg.sheetName);
+    var fresh = !existing || existing.getLastRow() === 0;
+    // 時刻を書く前に確かめる（書いたあとにタイムゾーンを変えても、書いた時刻は直らない）
+    var tz = checkTimeZone_(ss, entry.name, cfg.matchTimeZone && fresh);
+    var sheet = getSheet_(ss, cfg.sheetName);
     sheet.appendRow(row);
     var lastRow = sheet.getLastRow();
     sheet.getRange(lastRow, 1, 1, 2).setNumberFormat(DATE_FORMAT);
@@ -63,7 +76,7 @@ WitGas.runlog = (function () {
       sheet.deleteRows(2, trimmed);
       lastRow -= trimmed;
     }
-    return { row: lastRow, trimmed: trimmed };
+    return { row: lastRow, trimmed: trimmed, timeZoneMismatch: tz.mismatch, timeZoneChanged: tz.changed };
   }
 
   /**
@@ -95,7 +108,10 @@ WitGas.runlog = (function () {
     if (opts.spreadsheet !== undefined && (opts.spreadsheet === null || typeof opts.spreadsheet !== 'object')) {
       throw new TypeError(where + 'opts.spreadsheet must be a Spreadsheet');
     }
-    return { maxRows: maxRows, sheetName: sheetName };
+    if (opts.matchTimeZone !== undefined && typeof opts.matchTimeZone !== 'boolean') {
+      throw new TypeError(where + 'opts.matchTimeZone must be a boolean');
+    }
+    return { maxRows: maxRows, sheetName: sheetName, matchTimeZone: opts.matchTimeZone === true };
   }
 
   function toRow_(entry) {
@@ -154,8 +170,44 @@ WitGas.runlog = (function () {
     if (sheet.getLastRow() === 0) {
       sheet.getRange(1, 1, 1, HEADER.length).setValues([HEADER]).setFontWeight('bold');
       sheet.setFrozenRows(1);
+      for (var c = 0; c < COLUMN_WIDTHS.length; c++) {
+        sheet.setColumnWidth(c + 1, COLUMN_WIDTHS[c]);
+      }
     }
     return sheet;
+  }
+
+  /**
+   * 記録先のスプレッドシートとスクリプトのタイムゾーンを比べる。
+   * 違うと、記録の時刻がずれて表示される。新しく作ったスプレッドシートは、一度シートを編集するまで
+   * タイムゾーンが America/Los_Angeles で保存されていて、設定画面には「東京」と出るので気づけない
+   * （2026-11-25・26 の実機確認 W1・W8）。
+   * fix が true なら、記録先をスクリプトのタイムゾーンに合わせる。そうでなければ警告だけ出す。
+   */
+  function checkTimeZone_(ss, name, fix) {
+    var none = { mismatch: false, changed: false };
+    if (typeof ss.getSpreadsheetTimeZone !== 'function') return none;
+    var sheetTz;
+    var scriptTz;
+    try {
+      sheetTz = ss.getSpreadsheetTimeZone();
+      scriptTz = Session.getScriptTimeZone();
+    } catch (e) {
+      return none;
+    }
+    if (sheetTz === scriptTz) return none;
+    var label = ' (' + String(name).slice(0, MAX_NAME_LENGTH) + ')';
+    if (fix && typeof ss.setSpreadsheetTimeZone === 'function') {
+      try {
+        ss.setSpreadsheetTimeZone(scriptTz);
+        console.log(LOG_PREFIX + 'set spreadsheet time zone to ' + scriptTz + ' (was ' + sheetTz + ')' + label);
+        return { mismatch: false, changed: true };
+      } catch (e) {
+        console.warn(LOG_PREFIX + 'could not set spreadsheet time zone (' + errorType_(e) + ')' + label);
+      }
+    }
+    console.warn(LOG_PREFIX + 'time zone differs: spreadsheet ' + sheetTz + ', script ' + scriptTz + label);
+    return { mismatch: true, changed: false };
   }
 
   /** セルに書く文字列：改行をなくし、長さを切り、式として読まれないようにする。 */

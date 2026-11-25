@@ -4,6 +4,10 @@
  * LockService のスクリプトロックが取れたときだけ処理を動かし、終わったら必ず解放する。
  * 取れなかったときは処理を動かさず「スキップ」として返す。
  *
+ * 同じ実行の中で入れ子に呼んだときは、外側のロックのまま中身を動かす（取り直しも解放もしない）。
+ * 本物の LockService.getScriptLock() は同じ実行の中では何度でも取れてしまい、
+ * 内側で解放すると外側の処理が終わる前にロックが外れるため（2026-11-25 の実機確認 L2）。
+ *
  * © 2026 wi-t.com Inc.
  */
 var WitGas = WitGas || {};
@@ -13,6 +17,10 @@ WitGas.lock = (function () {
 
   var DEFAULT_WAIT_MS = 0;
   var LOG_PREFIX = '[WitGas.lock] ';
+
+  // この実行で WitGas.lock.run が何段ロックを持っているか。
+  // GAS のグローバルは実行ごとに作り直されるので、ほかの実行とは共有しない。
+  var depth_ = 0;
 
   /**
    * ロックが取れたときだけ fn を実行する。
@@ -25,7 +33,8 @@ WitGas.lock = (function () {
    *     引数は {name, result:'skipped', reason:'locked', startedAt, endedAt}
    * @param {Object} [opts.lock] 使うロック（tryLock / releaseLock を持つもの）。
    *     省略時は LockService.getScriptLock()
-   * @return {{skipped: false, value: *}|{skipped: true, reason: string, name: string}}
+   * @return {{skipped: false, value: *, nested?: true}|{skipped: true, reason: string, name: string}}
+   *     入れ子で動かしたときは nested: true がつく
    */
   function run(name, fn, opts) {
     if (typeof name !== 'string' || name.trim() === '') {
@@ -43,6 +52,21 @@ WitGas.lock = (function () {
       throw new TypeError('WitGas.lock.run: opts.onSkip must be a function');
     }
 
+    if (depth_ > 0) {
+      // 外側がロックを持っている。取り直さず、解放もせずに中身だけ動かす。
+      depth_++;
+      var nestedValue;
+      try {
+        nestedValue = fn();
+      } finally {
+        depth_--;
+      }
+      if (isThenable_(nestedValue)) {
+        throw new TypeError('WitGas.lock.run: fn must be synchronous');
+      }
+      return { skipped: false, value: nestedValue, nested: true };
+    }
+
     var lock = opts.lock || LockService.getScriptLock();
     var startedAt = new Date();
 
@@ -54,11 +78,14 @@ WitGas.lock = (function () {
     var value;
     var fnError = null;
     var fnFailed = false;
+    depth_++;
     try {
       value = fn();
     } catch (e) {
       fnFailed = true;
       fnError = e;
+    } finally {
+      depth_--;
     }
 
     var releaseError = release_(lock);

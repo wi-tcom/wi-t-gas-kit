@@ -12,11 +12,17 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 
 | Part | Purpose | Status |
 |------|---------|--------|
-| `WitGas.lock` | Prevent concurrent runs | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.guard` | One-line wrapper combining the above | Implemented (Node tests only; not yet verified on GAS) |
+| `WitGas.lock` | Prevent concurrent runs | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.guard` | One-line wrapper combining the above | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.reconcile` | Match two tables by key | Implemented (Node tests only; not yet verified on GAS) |
+
+### Examples
+
+| Example | Description | Status |
+|---------|-------------|--------|
+| [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (Node tests only; not yet verified on GAS) |
 
 ## Installation
 
@@ -145,6 +151,7 @@ function dailyJob() {   // called from a time-driven trigger
 |------|--------|
 | Ran | `{ skipped: false, value: <return value of fn> }` |
 | Skipped (lock not acquired) | `{ skipped: true, reason: 'locked', name: <name> }` |
+| Called nested (see below) | `{ skipped: false, value: <return value of fn>, nested: true }` |
 | `fn` threw | The lock is released, then the same error is rethrown |
 
 ### Options
@@ -162,6 +169,8 @@ function dailyJob() {   // called from a time-driven trigger
 - `fn` must be synchronous. Returning a `Promise` is an error because the lock would be released first.
 - If `fn` succeeds but releasing the lock fails, the release error is thrown (a stuck lock would make every later run skip, so it is not treated as success).
 - If both `fn` and the release fail, the `fn` error is thrown and the release failure is logged.
+- **Nesting**: calling `lock.run` (or `guard`) again inside `fn` in the same execution runs the inner function under the outer lock, without re-acquiring or releasing it (`waitMs`, `lock` and `onSkip` are ignored).
+  The real script lock can be re-acquired within the same execution, and an inner release would drop the outer lock early (on-GAS check L2, 2026-11-25).
 
 ## WitGas.resume — continue across executions
 
@@ -211,6 +220,9 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 ### How it splits
 
+- The continuation trigger is set for 1 minute later, but in the on-GAS check (2026-11-25) it ran **about 87–94 seconds** after pausing.
+  Total time is roughly (time per run, up to 4.5 min, + about 1.5 min wait) × runs. For example, 10 items of 1 minute each took 3 runs and about 13 minutes.
+
 - It moves on to the next item only if that item would still fit in the budget even if it took as long as the longest item so far in this execution.
 - Time is counted from the call to `run`. If you do slow setup before it, lower `budgetMs` accordingly.
 - At least one item is processed per execution, so a job never keeps rescheduling without progress.
@@ -237,6 +249,14 @@ Write each item so processing it twice gives the same result:
 3. **Fixed names**: create files with fixed names; skip (or overwrite) if they exist.
 4. **Irreversible actions (e.g. sending mail)**: mark "sending" before and "done" after. Items left at "sending" are checked by a person, not resent automatically.
 5. Do not delete or reorder rows while a job is in progress (the cursor is a position). Use IDs for done markers if needed.
+
+### Fired triggers
+
+One-time triggers stay listed as disabled after they fire (on-GAS check R5, 2026-11-25).
+`resume` deletes the fired trigger at the start of the next run and leaves none when finished.
+A fired trigger remains listed only when:
+
+- the continuation run was skipped because of a lock collision (below): it is removed on the next `run` or by `cleanup(key)`.
 
 ### When the lock collides
 
@@ -296,11 +316,20 @@ Results are written as 成功 (success), 失敗 (failure), スキップ (skipped
 | (neither) | active spreadsheet | For scripts bound to a spreadsheet; error if none. |
 | `sheetName` | `実行記録` | Sheet name. |
 | `maxRows` | `5000` | Rows to keep (excluding the header). Oldest rows are deleted beyond this. |
+| `matchTimeZone` | `false` | Only when creating the run-log sheet (or when it is empty), set the log spreadsheet's time zone to the script's if they differ. If the sheet already has rows, nothing is changed and only a warning is logged. Off by default because it changes the client's file settings. |
 
 ### Rules
 
 - Text starting with `=`, `+`, `-` or `@` is prefixed with `'` so it is not read as a formula.
 - An existing sheet's header is not rewritten (keep the column order above).
+- Column widths are set when the sheet is created (150 px for start/end so the timestamps are not cut off).
+- **Mind the log spreadsheet's time zone.** A newly created spreadsheet stores `America/Los_Angeles` until a sheet is edited once, while File → Settings shows Tokyo, so you cannot notice it on screen (on-GAS check W8, 2026-11-26: renaming the file did not change it; editing a sheet, such as renaming it, changed it to `Asia/Tokyo`).
+  Attaching a script via Extensions → Apps Script also changed it to `Asia/Tokyo` (check E8), so writing to the script's own spreadsheet showed no shift in our checks. The shift happens when **the log is a separate spreadsheet written by `spreadsheetId` that has never been edited since it was created**.
+  Writing in that state shows times 17 hours off, and fixing the time zone afterwards does not fix rows already written.
+  - After creating a log spreadsheet, edit a sheet once (e.g. rename it) before writing.
+  - Or set `matchTimeZone: true` to align it when the run-log sheet is created.
+    **`matchTimeZone` acts only when the run-log sheet is created (or empty).** When writing to a run-log sheet that already has rows, the file's time zone is left as is even if it is still Pacific, and only the warning below is logged (those rows are already shifted; changing it would mix two time bases in one sheet). In that case, edit a sheet of the log spreadsheet once (e.g. rename it) so its time zone becomes `Asia/Tokyo`, then recreate the run-log sheet (File → Settings already shows Tokyo, so looking there does not fix it).
+  - If written with a mismatch, `[WitGas.runlog] time zone differs: ...` is logged and `timeZoneMismatch` is `true`; when aligned, `timeZoneChanged` is `true`.
 - Write failures are thrown.
 
 ## WitGas.notify — failure notification
@@ -420,6 +449,7 @@ Writes the result to a "照合結果" (reconcile result) sheet: counts per categ
 
 - The target sheet must be **empty or a previous `writeReport` output (A1 is "照合日時")**. Any other sheet is left untouched and an error is thrown.
 - A previous report is cleared before writing.
+- Column widths are set only when the sheet is new or empty (so the timestamp is not cut off); later writes keep widths the client changed.
 - Values starting with `=`, `+`, `-` or `@` are prefixed with `'` so they are not read as formulas.
 
 ### summaryText(result, labels)
@@ -467,6 +497,8 @@ npm test
 - Tests use Node's built-in `node:test` (Node 22+, no packages).
 - `test/mocks/` contains fakes of GAS services and a fake clock; `test/helpers/gas-env.js` loads `src/` into one shared global scope, as GAS does.
 - GitHub Actions (`.github/workflows/test.yml`) runs the same tests.
+- Examples live in `examples/<name>/`; `test/examples/` loads only the parts an example uses plus its source.
+- `npm run example:build -- <name>` gathers an example into a pushable folder (`dist/<name>/`).
 - On-GAS verification steps and results: [docs/manual-check.md](docs/manual-check.md) (Japanese).
 
 © 2026 wi-t.com Inc.

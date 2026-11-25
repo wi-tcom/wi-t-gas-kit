@@ -367,3 +367,15 @@ test('guard と組み合わせる：実行記録には件数だけ、照合結�
   assert.ok(!JSON.stringify(log).includes('山田'));
   assert.equal(ss.getSheetByName('照合結果').values()[11][1], 'A002');
 });
+
+test('writeReport：シートを新しく作るときだけ列幅を決める（照合日時が切れないように。2 回目からは変えない）', () => {
+  const env = createGasEnv();
+  const ss = env.SpreadsheetApp.addSpreadsheet('SS');
+  const r = env.WitGas.reconcile.compare(LEFT, RIGHT, { key: '請求番号' });
+  env.WitGas.reconcile.writeReport(r, { spreadsheetId: 'SS' });
+  const sheet = ss.getSheetByName('照合結果');
+  assert.deepEqual({ ...sheet._meta.columnWidths }, { 1: 100, 2: 150, 3: 70, 4: 70, 5: 140, 6: 150, 7: 150 });
+  sheet.setColumnWidth(2, 300); // 先方が広げた
+  env.WitGas.reconcile.writeReport(r, { spreadsheetId: 'SS' });
+  assert.equal(sheet._meta.columnWidths[2], 300);
+});

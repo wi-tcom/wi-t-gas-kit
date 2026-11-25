@@ -24,6 +24,18 @@ function createSheet(name) {
       return 0;
     },
     getMaxRows: () => Math.max(1000, rows.length),
+    getLastColumn() {
+      let n = 0;
+      for (const r of rows) {
+        for (let c = r.length - 1; c >= 0; c--) {
+          if (r[c] !== '' && r[c] !== null && r[c] !== undefined) { n = Math.max(n, c + 1); break; }
+        }
+      }
+      return n;
+    },
+    getDataRange() {
+      return sheet.getRange(1, 1, Math.max(1, sheet.getLastRow()), Math.max(1, sheet.getLastColumn()));
+    },
     appendRow(values) {
       if (sheet._appendError) {
         const err = sheet._appendError;
@@ -87,6 +99,11 @@ function createSheet(name) {
     setFrozenRows(n) {
       meta.frozenRows = n;
     },
+    setColumnWidth(column, width) {
+      meta.columnWidths = meta.columnWidths || {};
+      meta.columnWidths[column] = width;
+      return sheet;
+    },
     getFrozenRows: () => meta.frozenRows,
     // --- テスト用 ---
     values() {
@@ -96,10 +113,14 @@ function createSheet(name) {
   return sheet;
 }
 
-function createSpreadsheet(id) {
+function createSpreadsheet(id, timeZone) {
   const sheets = new Map();
+  const toasts = [];
+  let tz = timeZone || 'Asia/Tokyo';
   const ss = {
     getId: () => id,
+    getSpreadsheetTimeZone: () => tz,
+    setSpreadsheetTimeZone(z) { tz = z; },
     getUrl: () => 'https://docs.google.com/spreadsheets/d/' + id + '/edit',
     getSheetByName: (name) => sheets.get(name) || null,
     insertSheet(name) {
@@ -108,16 +129,52 @@ function createSpreadsheet(id) {
       sheets.set(name, s);
       return s;
     },
-    getSheets: () => Array.from(sheets.values())
+    getSheets: () => Array.from(sheets.values()),
+    toast(message, title, timeoutSeconds) {
+      toasts.push({ message, title, timeoutSeconds });
+    },
+    // --- テスト用 ---
+    toasts
   };
   return ss;
+}
+
+/**
+ * getUi() の偽物。メニューとアラートを記録する。
+ * withoutUi() にすると、エディタやトリガーから動かしたときと同じく getUi() が失敗する。
+ */
+function createUi(state) {
+  return {
+    createMenu(title) {
+      const menu = { title, items: [] };
+      const builder = {
+        addItem(caption, functionName) { menu.items.push({ caption, functionName }); return builder; },
+        addSeparator() { menu.items.push({ separator: true }); return builder; },
+        addToUi() { state.menus.push(menu); }
+      };
+      return builder;
+    },
+    alert(message) {
+      state.alerts.push(message);
+      return 'OK';
+    }
+  };
 }
 
 function createSpreadsheetApp() {
   const books = new Map();
   let active = null;
   const calls = [];
+  const uiState = { menus: [], alerts: [], available: true };
   return {
+    getUi() {
+      if (!uiState.available) throw new Error('Cannot call SpreadsheetApp.getUi() from this context.');
+      return createUi(uiState);
+    },
+    getActive() {
+      calls.push({ method: 'getActive' });
+      return active;
+    },
     openById(id) {
       calls.push({ method: 'openById', id });
       const ss = books.get(id);
@@ -130,13 +187,17 @@ function createSpreadsheetApp() {
     },
     // --- テスト用 ---
     addSpreadsheet(id, options) {
-      const ss = createSpreadsheet(id);
+      const ss = createSpreadsheet(id, options && options.timeZone);
       books.set(id, ss);
       if (options && options.active) active = ss;
       return ss;
     },
     get calls() {
       return calls;
+    },
+    ui: uiState,
+    withoutUi() {
+      uiState.available = false;
     }
   };
 }
