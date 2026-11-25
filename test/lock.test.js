@@ -66,17 +66,57 @@ test('スキップしたら実行ログに「skipped」と残し、onSkip に記
   assert.deepEqual(Object.keys(e).sort(), ['endedAt', 'name', 'reason', 'result', 'startedAt']);
 });
 
-test('実行中に同じ処理がもう一度呼ばれても二重には動かない', () => {
+test('偽物の LockService は本物と同じく、同じ実行の中では再入でき、どの Lock で解放しても外れる', () => {
   const env = createGasEnv();
-  const order = [];
+  const a = env.LockService.getScriptLock();
+  const b = env.LockService.getScriptLock();
+  assert.equal(a.tryLock(0), true);
+  assert.equal(b.tryLock(0), true, '同じ実行なら 2 つめの Lock でも取れる（実機確認 L2）');
+  b.releaseLock();
+  assert.equal(env.LockService.isHeld(), false, '内側で解放すると外側のロックも外れる');
+
+  a.tryLock(0);
+  env.LockService.newExecution();
+  assert.equal(env.LockService.getScriptLock().tryLock(0), false, '別の実行は取れない');
+});
+
+test('入れ子：同じ実行の中でもう一度呼ぶと、外側のロックのまま中身を動かし、取り直しも解放もしない', () => {
+  const env = createGasEnv();
   let inner;
-  env.WitGas.lock.run('集計', () => {
-    order.push('outer');
-    inner = env.WitGas.lock.run('集計', () => { order.push('inner'); });
+  let heldAfterInner;
+  const outer = env.WitGas.lock.run('集計', () => {
+    inner = env.WitGas.lock.run('集計の一部', () => 'inner');
+    heldAfterInner = env.LockService.isHeld();
+    return 'outer';
   });
-  assert.deepEqual(order, ['outer']);
-  assert.equal(inner.skipped, true);
+  assert.deepEqual({ ...inner }, { skipped: false, value: 'inner', nested: true });
+  assert.deepEqual({ ...outer }, { skipped: false, value: 'outer' });
+  assert.equal(heldAfterInner, true, '内側が終わっても外側のロックは外れていない');
+  assert.equal(env.LockService.isHeld(), false, '外側が終わったら外れる');
+  assert.deepEqual(methods(env), ['getScriptLock', 'tryLock', 'releaseLock'], 'ロックの操作は外側の 1 回だけ');
+});
+
+test('入れ子の中身が失敗したら、そのエラーは外側の fn に伝わり、外側の終わりで解放される', () => {
+  const env = createGasEnv();
+  const boom = new Error('inner');
+  assert.throws(() => env.WitGas.lock.run('集計', () => {
+    env.WitGas.lock.run('集計の一部', () => { throw boom; });
+  }), (e) => e === boom);
   assert.equal(env.LockService.isHeld(), false);
+  const next = env.WitGas.lock.run('集計', () => 'next');
+  assert.equal(next.nested, undefined, '次の呼び出しは入れ子あつかいにならない');
+  assert.equal(next.value, 'next');
+});
+
+test('入れ子の中身が終わったあとも、外側が終わるまでは、ほかの実行はロックを取れない', () => {
+  const env = createGasEnv();
+  let seenByOther;
+  env.WitGas.lock.run('集計', () => {
+    env.WitGas.lock.run('集計の一部', () => {});
+    env.LockService.newExecution();
+    seenByOther = env.LockService.getScriptLock().tryLock(0);
+  });
+  assert.equal(seenByOther, false);
 });
 
 test('前の実行が終われば次の実行はロックを取れる', () => {

@@ -12,10 +12,10 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 
 | Part | Purpose | Status |
 |------|---------|--------|
-| `WitGas.lock` | Prevent concurrent runs | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.guard` | One-line wrapper combining the above | Implemented (Node tests only; not yet verified on GAS) |
+| `WitGas.lock` | Prevent concurrent runs | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.guard` | One-line wrapper combining the above | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.reconcile` | Match two tables by key | Implemented (Node tests only; not yet verified on GAS) |
 
 ### Examples
@@ -151,6 +151,7 @@ function dailyJob() {   // called from a time-driven trigger
 |------|--------|
 | Ran | `{ skipped: false, value: <return value of fn> }` |
 | Skipped (lock not acquired) | `{ skipped: true, reason: 'locked', name: <name> }` |
+| Called nested (see below) | `{ skipped: false, value: <return value of fn>, nested: true }` |
 | `fn` threw | The lock is released, then the same error is rethrown |
 
 ### Options
@@ -168,6 +169,8 @@ function dailyJob() {   // called from a time-driven trigger
 - `fn` must be synchronous. Returning a `Promise` is an error because the lock would be released first.
 - If `fn` succeeds but releasing the lock fails, the release error is thrown (a stuck lock would make every later run skip, so it is not treated as success).
 - If both `fn` and the release fail, the `fn` error is thrown and the release failure is logged.
+- **Nesting**: calling `lock.run` (or `guard`) again inside `fn` in the same execution runs the inner function under the outer lock, without re-acquiring or releasing it (`waitMs`, `lock` and `onSkip` are ignored).
+  The real script lock can be re-acquired within the same execution, and an inner release would drop the outer lock early (on-GAS check L2, 2026-11-25).
 
 ## WitGas.resume — continue across executions
 
@@ -217,6 +220,9 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 ### How it splits
 
+- The continuation trigger is set for 1 minute later, but in the on-GAS check (2026-11-25) it ran **about 87–94 seconds** after pausing.
+  Total time is roughly (time per run, up to 4.5 min, + about 1.5 min wait) × runs. For example, 10 items of 1 minute each took 3 runs and about 13 minutes.
+
 - It moves on to the next item only if that item would still fit in the budget even if it took as long as the longest item so far in this execution.
 - Time is counted from the call to `run`. If you do slow setup before it, lower `budgetMs` accordingly.
 - At least one item is processed per execution, so a job never keeps rescheduling without progress.
@@ -243,6 +249,14 @@ Write each item so processing it twice gives the same result:
 3. **Fixed names**: create files with fixed names; skip (or overwrite) if they exist.
 4. **Irreversible actions (e.g. sending mail)**: mark "sending" before and "done" after. Items left at "sending" are checked by a person, not resent automatically.
 5. Do not delete or reorder rows while a job is in progress (the cursor is a position). Use IDs for done markers if needed.
+
+### Fired triggers
+
+One-time triggers stay listed as disabled after they fire (on-GAS check R5, 2026-11-25).
+`resume` deletes the fired trigger at the start of the next run and leaves none when finished.
+A fired trigger remains listed only when:
+
+- the continuation run was skipped because of a lock collision (below): it is removed on the next `run` or by `cleanup(key)`.
 
 ### When the lock collides
 
@@ -307,6 +321,9 @@ Results are written as 成功 (success), 失敗 (failure), スキップ (skipped
 
 - Text starting with `=`, `+`, `-` or `@` is prefixed with `'` so it is not read as a formula.
 - An existing sheet's header is not rewritten (keep the column order above).
+- Column widths are set when the sheet is created (150 px for start/end so the timestamps are not cut off).
+- **Set the log spreadsheet's time zone to the script's** (File → Settings). If they differ, `[WitGas.runlog] time zone differs: ...` is logged and `append` returns `timeZoneMismatch: true`.
+  In the on-GAS check (2026-11-25), times in a separate spreadsheet opened by `spreadsheetId` were shown 17 hours off (cause under investigation; step W8).
 - Write failures are thrown.
 
 ## WitGas.notify — failure notification

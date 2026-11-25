@@ -27,8 +27,10 @@ test('シートがなければ「実行記録」を作り、見出しを太字�
   assert.deepEqual(s.values()[0], HEADER);
   assert.equal(s.getFrozenRows(), 1);
   assert.deepEqual(s._meta.fontWeights.map((f) => [f.row, f.numCols, f.w]), [[1, 7, 'bold']]);
-  assert.deepEqual({ ...res }, { row: 2, trimmed: 0 });
+  assert.deepEqual({ ...res }, { row: 2, trimmed: 0, timeZoneMismatch: false });
   assert.deepEqual([...env.WitGas.runlog.HEADER], HEADER);
+  assert.deepEqual({ ...s._meta.columnWidths }, { 1: 150, 2: 150, 3: 160, 4: 80, 5: 60, 6: 120, 7: 300 },
+    '日時が切れて見えない幅にする（実機確認 W2）');
 });
 
 test('1 実行 1 行：開始・終了・処理名・結果・件数・エラー種別・メッセージ', () => {
@@ -125,7 +127,7 @@ test('上限の既定は 5,000 行：5,000 行あるところに足すと、一�
   assert.equal(values.length, 5001);
   assert.equal(values[1][2], 'old2');
   assert.equal(values[5000][2], 'new');
-  assert.deepEqual({ ...res }, { row: 5001, trimmed: 1 });
+  assert.deepEqual({ ...res }, { row: 5001, trimmed: 1, timeZoneMismatch: false });
   assert.deepEqual(s._meta.deleteCalls, [[2, 1]]);
 });
 
@@ -186,4 +188,35 @@ test('シートへの書き込みが失敗したらそのエラーを投げる',
   const err = new Error('Service Spreadsheets failed');
   s._appendError = err;
   assert.throws(() => env.WitGas.runlog.append({ name: 'x', result: 'success' }, opts), (e) => e === err);
+});
+
+test('記録先とスクリプトのタイムゾーンが違えば、実行ログに警告を出す（実機確認 W1）', () => {
+  const env = createGasEnv();
+  env.SpreadsheetApp.addSpreadsheet('LA', { timeZone: 'America/Los_Angeles' });
+  const res = env.WitGas.runlog.append({ name: '日次集計', result: 'success' }, { spreadsheetId: 'LA' });
+  assert.equal(res.timeZoneMismatch, true);
+  assert.ok(env.logs.some((l) => l.level === 'warn' &&
+    l.message === '[WitGas.runlog] time zone differs: spreadsheet America/Los_Angeles, script Asia/Tokyo (日次集計)'));
+});
+
+test('タイムゾーンが同じなら警告しない。タイムゾーンを返さないスプレッドシートでも止まらない', () => {
+  const { env, opts } = setup();
+  env.WitGas.runlog.append({ name: 'x', result: 'success' }, opts);
+  assert.ok(!env.logs.some((l) => l.level === 'warn'));
+
+  const rows = [];
+  const fake = {
+    getSheetByName: () => null,
+    insertSheet: () => ({
+      getLastRow: () => rows.length,
+      getRange: () => ({ setValues: (v) => { rows.push(...v); return { setFontWeight() {} }; }, setNumberFormat() {} }),
+      setFrozenRows() {},
+      setColumnWidth() {},
+      appendRow: (r) => rows.push(r),
+      deleteRows() {}
+    })
+  };
+  const res = env.WitGas.runlog.append({ name: 'x', result: 'success' }, { spreadsheet: fake });
+  assert.equal(res.timeZoneMismatch, false);
+  assert.equal(rows.length, 2);
 });

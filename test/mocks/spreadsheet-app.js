@@ -99,6 +99,11 @@ function createSheet(name) {
     setFrozenRows(n) {
       meta.frozenRows = n;
     },
+    setColumnWidth(column, width) {
+      meta.columnWidths = meta.columnWidths || {};
+      meta.columnWidths[column] = width;
+      return sheet;
+    },
     getFrozenRows: () => meta.frozenRows,
     // --- テスト用 ---
     values() {
@@ -108,11 +113,14 @@ function createSheet(name) {
   return sheet;
 }
 
-function createSpreadsheet(id) {
+function createSpreadsheet(id, timeZone) {
   const sheets = new Map();
   const toasts = [];
+  let tz = timeZone || 'Asia/Tokyo';
   const ss = {
     getId: () => id,
+    getSpreadsheetTimeZone: () => tz,
+    setSpreadsheetTimeZone(z) { tz = z; },
     getUrl: () => 'https://docs.google.com/spreadsheets/d/' + id + '/edit',
     getSheetByName: (name) => sheets.get(name) || null,
     insertSheet(name) {
@@ -179,7 +187,7 @@ function createSpreadsheetApp() {
     },
     // --- テスト用 ---
     addSpreadsheet(id, options) {
-      const ss = createSpreadsheet(id);
+      const ss = createSpreadsheet(id, options && options.timeZone);
       books.set(id, ss);
       if (options && options.active) active = ss;
       return ss;

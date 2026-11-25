@@ -89,6 +89,7 @@ function createGasEnv(options) {
     CacheService,
     /** 次に動くトリガーを発火させる（時計もその時刻まで進む） */
     fireNext() {
+      LockService.newExecution(); // トリガーで動くのは別の実行
       return ScriptApp.fireNext(context);
     },
     /** src が増やしたグローバル名（WitGas だけであるべき） */
