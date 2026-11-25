@@ -7,7 +7,7 @@ Node のテストは GAS のサービスを偽物に差し替えて動かして�
 ## 準備
 
 1. 確認用の新しいスプレッドシートを作り、「拡張機能 → Apps Script」を開く。
-2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
+2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`・`reconcile.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
 3. 「プロジェクトの設定 → 『appsscript.json』マニフェスト ファイルをエディタで表示する」をオンにし、
    `appsscript.json` を本リポジトリのものに置き換える。
 4. 次の確認用の関数を別ファイル `check.gs` に貼る。
@@ -183,6 +183,56 @@ function checkGuard_badConfig() {
 }
 ```
 
+## 確認用の関数（reconcile）
+
+`checkReconcile.gs` に貼ります。確認用のスプレッドシートに「会計」シートを作り、次の表を A1 から入れておきます（金額は数、日付はシートの日付で入れる）。
+
+| 請求番号 | 金額 | 入金日 |
+|----------|------|--------|
+| A001 | 1000 | 2026/01/05 |
+| A002 | 2500 | 2026/01/06 |
+| A003 | 3000 | 2026/01/07 |
+| ＡＢ１ | 500 | 2026/01/08 |
+
+```js
+var CSV = [
+  '請求番号,入金額,入金日',
+  'A001,"1,000",2026/1/5',
+  'A002,"¥2,400",2026年1月6日',
+  'AB1,500円,2026-01-08',
+  'A005,△500,2026/1/9',
+  ''
+].join('\n');
+
+function checkReconcile() {
+  var ss = SpreadsheetApp.getActive();
+  var books = ss.getSheetByName('会計').getDataRange().getValues();
+  var bank = Utilities.parseCsv(CSV);
+  var r = WitGas.reconcile.compare(books, bank, {
+    key: '請求番号', columnMap: { '金額': '入金額' },
+    numberColumns: ['金額'], dateColumns: ['入金日'], width: true
+  });
+  WitGas.reconcile.writeReport(r, { spreadsheet: ss, labels: { left: '会計', right: '銀行' } });
+  console.log(WitGas.reconcile.summaryText(r, { left: '会計', right: '銀行' }));
+}
+
+function checkReconcile_refuse() {
+  var r = WitGas.reconcile.compare([['ID'], ['1']], [['ID'], ['1']], { key: 'ID' });
+  WitGas.reconcile.writeReport(r, { spreadsheet: SpreadsheetApp.getActive(), sheetName: '会計' });
+}
+
+function checkReconcile_large() {
+  // 左右 1 万行ずつの照合と書き込みにかかる時間を測る（「実行数」の時間を記録する）
+  var l = [['ID', '値']], r = [['ID', '値']];
+  for (var i = 0; i < 10000; i++) { l.push(['K' + i, i]); r.push(['K' + i, i % 100 === 0 ? i + 1 : i]); }
+  var t0 = Date.now();
+  var res = WitGas.reconcile.compare(l, r, { key: 'ID' });
+  var t1 = Date.now();
+  WitGas.reconcile.writeReport(res, { spreadsheet: SpreadsheetApp.getActive(), sheetName: '照合_大' });
+  console.log('compare ' + (t1 - t0) + 'ms / writeReport ' + (Date.now() - t1) + 'ms / ' + WitGas.reconcile.summaryText(res));
+}
+```
+
 ## 確認する項目
 
 ### lock
@@ -242,6 +292,16 @@ function checkGuard_badConfig() {
 | G4 | `checkGuard_slow` を実行し、終わる前に別のタブでもう一度 `checkGuard_slow` を実行 | 後の方は待たずに終わり、実行記録に「スキップ」（メッセージ `locked`）。メールは来ない |
 | G5 | `checkGuard_resume` を実行し、15 分ほど待つ | 実行記録に「続きあり（4, cursor 4, runs 1）」「続きあり（4, cursor 8, runs 2）」「成功（2, cursor 10, runs 3）」。トリガーとプロパティが残らない |
 | G6 | `checkGuard_badConfig` を実行 | すぐにエラー（`opts.to has an invalid address`）。「ここは動かない」は出ず、実行記録もメールもない |
+
+### reconcile
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| C1 | `checkReconcile` を実行 | ログに `一致 2 / 不一致 1 / 会計だけ 1 / 銀行だけ 1 / キー重複 0 / キーなし 0`（A001 はシートの日付と `"1,000"`、`ＡＢ１` は `AB1`・`500円` と一致する。A002 は金額が違う） |
+| C2 | C1 のあと「照合結果」シートを見る | 上に件数、下に明細。不一致の行は `金額 / 入金額`、会計の値 2500、銀行の値 `¥2,400`。`会計だけ` に A003、`銀行だけ` に A005 |
+| C3 | `checkReconcile_refuse` を実行 | `not a reconcile report` のエラーになり、「会計」シートは消えていない |
+| C4 | `checkReconcile_large` を実行 | 6 分以内に終わる。ログの時間（compare と writeReport）を記録する。README に時間を書くのは、この記録のあとにする |
+| C5 | C1 の `width: true` を外して実行 | ログが `一致 1 / 不一致 1 / 会計だけ 2 / 銀行だけ 2 / キー重複 0 / キーなし 0` になる（`ＡＢ１` と `AB1` が別のキーになる。`String.prototype.normalize` が GAS で動くことの確認） |
 
 ## 結果の記録
 

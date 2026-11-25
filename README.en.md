@@ -16,6 +16,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.guard` | One-line wrapper combining the above | Implemented (Node tests only; not yet verified on GAS) |
+| `WitGas.reconcile` | Match two tables by key | Implemented (Node tests only; not yet verified on GAS) |
 
 ## Installation
 
@@ -338,6 +339,98 @@ The mail (in Japanese) contains the job name, error type, time, count and the li
   Two executions failing at the same moment may also send two mails. Think "usually one", not "at most one".
 - Newlines in the name and type are removed so the subject stays intact.
 
+## WitGas.reconcile — reconciliation
+
+Matches two tables by key and sorts rows into **matched, mismatched, left only, right only, duplicate key and blank key**.
+Every row lands in exactly one category, so the counts add up to the original row counts (otherwise it throws).
+
+```js
+function reconcileInvoices() {
+  WitGas.guard('invoice-reconcile', function (ctx) {
+    var ss = SpreadsheetApp.getActive();
+    var books = ss.getSheetByName('Books').getDataRange().getValues();
+    var bank  = Utilities.parseCsv(csvText);               // CSV text (how you load it depends on the case)
+    var r = WitGas.reconcile.compare(books, bank, {
+      key: 'InvoiceNo',
+      columnMap: { 'Amount': 'Deposit' },                  // only columns whose names differ
+      numberColumns: ['Amount'],
+      dateColumns: ['PaidOn']
+    });
+    WitGas.reconcile.writeReport(r, { spreadsheet: ss, labels: { left: 'Books', right: 'Bank' } });
+    ctx.setCount(r.summary.leftRows);
+    ctx.setMessage(WitGas.reconcile.summaryText(r));
+  }, GUARD);
+}
+```
+
+### compare(left, right, opts)
+
+Tables are 2D arrays whose first row is the header (the result of a sheet's `getValues()` or `Utilities.parseCsv()` works as is).
+Columns are referred to by header name.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `key` | (required) | Key column name, or an array for a composite key. |
+| `columns` | columns in both tables (except keys) | Columns to compare. |
+| `columnMap` | — | Left column name → right column name, only where names differ (keys included). |
+| `numberColumns` | — | Compare as numbers. `1,000`, `¥1,000`, `1,000円` and full-width digits become 1000; `△500` / `▲500` (Japanese minus) become -500. Unreadable values are compared as text. |
+| `dateColumns` | — | Compare as dates. Sheet dates and `2026/1/5`, `2026-01-05`, `2026年1月5日` become the same day. |
+| `trim` | `true` | Ignore leading/trailing spaces (including full-width spaces). |
+| `width` | `false` | Ignore full-width/half-width differences (NFKC). |
+| `timeZone` | script time zone | Time zone used to turn sheet dates into days. |
+
+**Comparison rules**
+
+- Columns that are not number columns are compared as text: `1000` equals `"1000"` but not `"1,000"`.
+- Keys follow the same rules: `"001"` and `1` are different keys (to keep leading zeros in codes). Put the key column in `numberColumns` to treat them as equal.
+- In non-date columns, sheet dates are compared including the time.
+- Empty, `null` and missing cells (short CSV rows) are all empty. `true` equals `"TRUE"`.
+- Rows whose key is duplicated are not matched; all of them (from both tables) go to "duplicate key". Rows with an empty key go to "blank key".
+- Rows with every cell empty are skipped (counted in `summary.leftEmptyRows` / `rightEmptyRows`).
+
+**Result**
+
+```js
+{
+  key: ['InvoiceNo'], columns: ['Customer', 'Amount'],
+  matched:    [{ key: ['A001'], leftRow: 2, rightRow: 2 }],
+  mismatched: [{ key: ['A002'], leftRow: 3, rightRow: 3,
+                 diffs: [{ column: 'Amount', rightColumn: 'Deposit', left: 2500, right: 2400 }] }],
+  leftOnly:   [{ key: ['A003'], leftRow: 4 }],
+  rightOnly:  [{ key: ['A005'], rightRow: 5 }],
+  duplicates: [{ key: ['A009'], leftRows: [8, 9], rightRows: [7] }],
+  blankKey:   [{ side: 'left', row: 10 }],
+  summary: { matched, mismatched, leftOnly, rightOnly, duplicates, blankKey,
+             leftRows, rightRows, leftEmptyRows, rightEmptyRows }
+}
+```
+
+Row numbers count the header as row 1 (for a sheet's `getDataRange()` starting at A1, they equal sheet row numbers).
+
+### writeReport(result, opts)
+
+Writes the result to a "照合結果" (reconcile result) sheet: counts per category on top, details below (one row per differing column for mismatches). Labels are in Japanese.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `spreadsheetId` / `spreadsheet` | active spreadsheet | Where to write. |
+| `sheetName` | `照合結果` | Sheet name. |
+| `labels` | `{ left: '左', right: '右' }` | Names of the two tables, used in category and column labels. |
+| `includeMatched` | `false` | Also list matched rows. |
+
+- The target sheet must be **empty or a previous `writeReport` output (A1 is "照合日時")**. Any other sheet is left untouched and an error is thrown.
+- A previous report is cleared before writing.
+- Values starting with `=`, `+`, `-` or `@` are prefixed with `'` so they are not read as formulas.
+
+### summaryText(result, labels)
+
+Returns a counts-only line such as `一致 120 / 不一致 3 / 左だけ 1 / 右だけ 0 / キー重複 0 / キーなし 0`, for the run-log message.
+
+### Business data
+
+The report sheet contains keys and values (business data) by nature. Keep it in the client's spreadsheet and mind its sharing settings.
+The run log and notifications get only the counts from `summaryText`. Error messages name columns but never contain data values.
+
 ## Permissions (oauthScopes)
 
 `oauthScopes` in `appsscript.json` is set explicitly and kept minimal. Each new part adds its reason here.
@@ -347,8 +440,7 @@ The mail (in Japanese) contains the job name, error type, time, count and the li
 | (no extra) | `WitGas.guard` | Only the scopes of the parts it uses (lock, runlog, notify). With `log: false`, `spreadsheets` is not needed; with `notify: false`, `script.send_mail` is not needed |
 | (none) | `WitGas.lock` | Uses only `LockService` and `console`; expected to need no extra scope (verified by L1) |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | Create and delete continuation triggers (`ScriptApp`). Saving the cursor (`PropertiesService`) is expected to need no extra scope (verified by R8) |
-
-| `https://www.googleapis.com/auth/spreadsheets` | `WitGas.runlog` | Open the spreadsheet by ID and write to it (`SpreadsheetApp.openById`) |
+| `https://www.googleapis.com/auth/spreadsheets` | `WitGas.runlog`, `WitGas.reconcile` | Open the spreadsheet by ID and write to it (`SpreadsheetApp.openById`). `reconcile.compare` alone needs no scope (`writeReport` does) |
 | `https://www.googleapis.com/auth/script.send_mail` | `WitGas.notify` | Send failure mails (`MailApp`). `CacheService`, `Utilities` and `Session` are expected to need no extra scope (verified by N1) |
 
 You may remove scopes of parts you do not use.
@@ -356,7 +448,7 @@ If `runlog` writes only to the spreadsheet the script is bound to (no `spreadshe
 
 ## How to stop
 
-- `WitGas.lock` creates no triggers and stores no data.
+- `WitGas.lock` creates no triggers and stores no data. Neither does `WitGas.reconcile` (the report sheet may be deleted).
 - To stop a `WitGas.resume` job midway, run a function that calls `WitGas.resume.cleanup('<key>')` from the script editor.
   To do it by hand, delete the continuation trigger (one-time trigger for the `handler` function) on the Triggers page,
   and delete `WitGas.resume:<key>` under Project Settings → Script Properties.

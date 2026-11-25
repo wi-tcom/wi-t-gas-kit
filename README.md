@@ -16,6 +16,7 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 | `WitGas.resume` | 6 分の上限の前に区切って続きを実行 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.guard` | 上の部品を 1 行で包む入り口 | 実装済み（Node のテストのみ。実機確認は未） |
+| `WitGas.reconcile` | 2 つの表をキーで突き合わせる | 実装済み（Node のテストのみ。実機確認は未） |
 
 ## 入れ方
 
@@ -355,6 +356,98 @@ WitGas.notify.failure(
   また、同時に 2 つの実行が失敗すると、2 通届くことがあります。「多くても 1 通」ではなく「ふつうは 1 通」と考えてください。
 - 処理名と種別の改行はなくします（件名が壊れないように）。
 
+## WitGas.reconcile — 照合
+
+2 つの表をキーで突き合わせ、**一致・不一致・左だけ・右だけ・キー重複・キーなし** に分けます。
+どの行も必ずどれか 1 つの区分に入るので、区分ごとの件数を足すと元の行数と合います（合わなければエラーにします）。
+
+```js
+function reconcileInvoices() {
+  WitGas.guard('請求照合', function (ctx) {
+    var ss = SpreadsheetApp.getActive();
+    var books = ss.getSheetByName('会計').getDataRange().getValues();
+    var bank  = Utilities.parseCsv(csvText);               // CSV の文字列（読み込み方は場面による）
+    var r = WitGas.reconcile.compare(books, bank, {
+      key: '請求番号',
+      columnMap: { '金額': '入金額' },                     // 列名が違う列だけ
+      numberColumns: ['金額'],
+      dateColumns: ['入金日']
+    });
+    WitGas.reconcile.writeReport(r, { spreadsheet: ss, labels: { left: '会計', right: '銀行' } });
+    ctx.setCount(r.summary.leftRows);
+    ctx.setMessage(WitGas.reconcile.summaryText(r, { left: '会計', right: '銀行' }));
+  }, GUARD);
+}
+```
+
+### compare(left, right, opts)
+
+表は 2 次元配列で、1 行目が見出しです（シートの `getValues()` や `Utilities.parseCsv()` の結果をそのまま渡せます）。
+列は見出しの名前で指定します。
+
+| 名前 | 既定 | 内容 |
+|------|------|------|
+| `key` | （必須） | キーの列名。複数列なら配列（`['店', '日付']`）。 |
+| `columns` | 両方にある列（キーを除く） | 比べる列名。 |
+| `columnMap` | — | 左の列名 → 右の列名。名前が違う列だけ書く（キーも可）。 |
+| `numberColumns` | — | 数として比べる列。`1,000`・`¥1,000`・`1,000円`・`１，０００` は 1000、`△500`・`▲500` は -500 にそろえる。読めない値は文字のまま比べる。 |
+| `dateColumns` | — | 日付として比べる列。シートの日付と `2026/1/5`・`2026-01-05`・`2026年1月5日` を同じ日にそろえる。 |
+| `trim` | `true` | 前後の空白（全角の空白も）を無視する。 |
+| `width` | `false` | 全角と半角の違いを無視する（`Ａ０１` と `A01`、`ｶﾞｽ` と `ガス`）。 |
+| `timeZone` | スクリプトのタイムゾーン | シートの日付を日にちにするときのタイムゾーン。 |
+
+**比べ方の決まり**
+
+- 数の列でなければ文字として比べます。`1000` と `"1000"` は同じ、`1000` と `"1,000"` は違います。
+- キーも同じ決まりです。`"001"` と `1` は別のキーです（コードの先頭の 0 を落とさないため）。同じにしたいときはキーの列を `numberColumns` に入れます。
+- 日付の列でなければ、シートの日付は時刻まで含めて比べます。
+- 空・`null`・足りない列（CSV の行が短い）は、どれも空として比べます。`true` と `"TRUE"` は同じです。
+- キーが重複している行は照合せず、両方の表の行をまとめて「キー重複」にします。キーが空の行は「キーなし」です。
+- すべての列が空の行は数えずに飛ばします（件数は `summary.leftEmptyRows`・`rightEmptyRows`）。
+
+**結果**
+
+```js
+{
+  key: ['請求番号'], columns: ['取引先', '金額'],
+  matched:    [{ key: ['A001'], leftRow: 2, rightRow: 2 }],
+  mismatched: [{ key: ['A002'], leftRow: 3, rightRow: 3,
+                 diffs: [{ column: '金額', rightColumn: '入金額', left: 2500, right: 2400 }] }],
+  leftOnly:   [{ key: ['A003'], leftRow: 4 }],
+  rightOnly:  [{ key: ['A005'], rightRow: 5 }],
+  duplicates: [{ key: ['A009'], leftRows: [8, 9], rightRows: [7] }],
+  blankKey:   [{ side: 'left', row: 10 }],
+  summary: { matched, mismatched, leftOnly, rightOnly, duplicates, blankKey,
+             leftRows, rightRows, leftEmptyRows, rightEmptyRows }
+}
+```
+
+行番号は、見出しを 1 行目として数えます（A1 から始まるシートの `getDataRange()` なら、シートの行番号と同じです）。
+
+### writeReport(result, opts)
+
+結果を「照合結果」シートに書きます。上に区分ごとの件数、その下に明細（不一致は違う列ごとに 1 行）です。
+
+| 名前 | 既定 | 内容 |
+|------|------|------|
+| `spreadsheetId` / `spreadsheet` | 開いているスプレッドシート | 書く先。 |
+| `sheetName` | `照合結果` | シート名。 |
+| `labels` | `{ left: '左', right: '右' }` | 表の呼び名。「会計だけ」「銀行の値」のように出る。 |
+| `includeMatched` | `false` | 一致した行も明細に書く。 |
+
+- 書く先のシートは、**空か、前に `writeReport` で書いたもの（A1 が「照合日時」）に限ります**。ほかのシートを指定すると、消さずにエラーにします。
+- 前の照合結果は消してから書きます。
+- `=`・`+`・`-`・`@` で始まる値は、式として読まれないよう先頭に `'` をつけます。
+
+### summaryText(result, labels)
+
+`一致 120 / 不一致 3 / 左だけ 1 / 右だけ 0 / キー重複 0 / キーなし 0` のような件数だけの文を返します。実行記録のメッセージに使えます。
+
+### 業務データの扱い
+
+照合結果のシートには、照合のためにキーと値（業務データ）を書きます。先方のスプレッドシートの中に置き、共有の範囲に気をつけてください。
+実行記録と通知には `summaryText` の件数だけを書きます。エラーのメッセージには列名だけを書き、データの値は書きません。
+
 ## 権限（oauthScopes）
 
 `appsscript.json` の `oauthScopes` を明示し、必要なものだけを並べます。部品を追加するたびに、ここに理由を書きます。
@@ -364,8 +457,7 @@ WitGas.notify.failure(
 | （追加なし） | `WitGas.guard` | 中で使う部品（lock・runlog・notify）の権限だけ。`log: false` なら `spreadsheets`、`notify: false` なら `script.send_mail` は要らない |
 | （なし） | `WitGas.lock` | `LockService` と `console` だけを使う。追加の権限を求めない想定（実機確認は L1） |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | 続きを動かすトリガーを作る・消す（`ScriptApp`）。カーソルの保存（`PropertiesService`）は追加の権限を求めない想定（実機確認は R8） |
-
-| `https://www.googleapis.com/auth/spreadsheets` | `WitGas.runlog` | 指定した ID のスプレッドシートを開いて書く（`SpreadsheetApp.openById`） |
+| `https://www.googleapis.com/auth/spreadsheets` | `WitGas.runlog`・`WitGas.reconcile` | 指定した ID のスプレッドシートを開いて書く（`SpreadsheetApp.openById`）。`reconcile.compare` だけなら権限は要らない（`writeReport` で使う） |
 | `https://www.googleapis.com/auth/script.send_mail` | `WitGas.notify` | 失敗を知らせるメールを送る（`MailApp`）。`CacheService`・`Utilities`・`Session` は追加の権限を求めない想定（実機確認は N1） |
 
 使わない部品の権限は外してかまいません。
@@ -374,7 +466,7 @@ WitGas.notify.failure(
 
 ## 止め方
 
-- `WitGas.lock` はトリガーも保存データも作りません。
+- `WitGas.lock` はトリガーも保存データも作りません。`WitGas.reconcile` も作りません（「照合結果」シートは消してかまいません）。
 - `WitGas.resume` の途中で止めるには、スクリプトエディタで `WitGas.resume.cleanup('<key>')` を呼ぶ関数を実行します。
   手で止める場合は、「トリガー」画面から続きのトリガー（関数名が `handler`、1 回だけ動くもの）を消し、
   「プロジェクトの設定 → スクリプト プロパティ」から `WitGas.resume:<key>` を消します。
