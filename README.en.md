@@ -18,6 +18,12 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.guard` | One-line wrapper combining the above | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.reconcile` | Match two tables by key | Implemented (Node tests only; not yet verified on GAS) |
 
+### Examples
+
+| Example | Description | Status |
+|---------|-------------|--------|
+| [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (Node tests only; not yet verified on GAS) |
+
 ## Installation
 
 ### Copy the files
@@ -467,6 +473,8 @@ npm test
 - Tests use Node's built-in `node:test` (Node 22+, no packages).
 - `test/mocks/` contains fakes of GAS services and a fake clock; `test/helpers/gas-env.js` loads `src/` into one shared global scope, as GAS does.
 - GitHub Actions (`.github/workflows/test.yml`) runs the same tests.
+- Examples live in `examples/<name>/`; `test/examples/` loads only the parts an example uses plus its source.
+- `npm run example:build -- <name>` gathers an example into a pushable folder (`dist/<name>/`).
 - On-GAS verification steps and results: [docs/manual-check.md](docs/manual-check.md) (Japanese).
 
 © 2026 wi-t.com Inc.

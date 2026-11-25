@@ -2,3 +2,5 @@ node_modules/
 # スクリプトIDや認証情報は先方・環境ごとなのでコミットしない
 .clasp.json
 .clasprc.json
+# 見本を GAS に送る形にまとめたもの（npm run example:build で作る）
+dist/

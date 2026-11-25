@@ -18,6 +18,12 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 | `WitGas.guard` | 上の部品を 1 行で包む入り口 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.reconcile` | 2 つの表をキーで突き合わせる | 実装済み（Node のテストのみ。実機確認は未） |
 
+### 見本
+
+| 見本 | 内容 | 状態 |
+|------|------|------|
+| [CSV照合](examples/csv-reconcile/README.md) | 会計シートと取り込んだ CSV を請求番号で照合し、結果をシートに出す（メニューから実行） | 実装済み（Node のテストのみ。実機確認は未） |
+
 ## 入れ方
 
 ### ファイルをコピーする
@@ -485,6 +491,8 @@ npm test
 - テストは Node の `node:test` で動きます（Node 22 以上。外部パッケージなし）。
 - `test/mocks/` に GAS のサービスの偽物と偽の時計があり、`test/helpers/gas-env.js` が `src/` を GAS と同じく 1 つの共有グローバルに読み込みます。
 - GitHub Actions（`.github/workflows/test.yml`）でも同じテストを回します。
+- 見本は `examples/<名前>/` にあり、`test/examples/` で、見本が使う部品と見本のソースだけを読み込んでテストします。
+- `npm run example:build -- <名前>` で、見本を GAS に送れる形（`dist/<名前>/`）にまとめます。
 - 実機での確認手順と結果は [docs/manual-check.md](docs/manual-check.md) にあります。
 
 © 2026 株式会社wi-t.com

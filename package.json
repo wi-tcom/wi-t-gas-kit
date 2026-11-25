@@ -4,7 +4,8 @@
   "private": true,
   "description": "GAS（Google Apps Script）を安心して運用するための部品集",
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "example:build": "node scripts/build-example.js"
   },
   "engines": {
     "node": ">=22"
