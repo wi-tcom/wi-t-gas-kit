@@ -7,7 +7,7 @@ Node のテストは GAS のサービスを偽物に差し替えて動かして�
 ## 準備
 
 1. 確認用の新しいスプレッドシートを作り、「拡張機能 → Apps Script」を開く。
-2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
+2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
 3. 「プロジェクトの設定 → 『appsscript.json』マニフェスト ファイルをエディタで表示する」をオンにし、
    `appsscript.json` を本リポジトリのものに置き換える。
 4. 次の確認用の関数を別ファイル `check.gs` に貼る。
@@ -148,6 +148,41 @@ function checkNotify() {
 }
 ```
 
+## 確認用の関数（guard）
+
+`checkGuard.gs` に貼ります。`LOG_ID` と `TO` は上（`checkLog.gs`）のものを使います。
+
+```js
+var GUARD = { log: { spreadsheetId: LOG_ID }, notify: { to: TO } };
+
+function checkGuard_ok() {
+  var res = WitGas.guard('確認_guard成功', function (ctx) { ctx.setCount(3); return 'ok'; }, GUARD);
+  console.log(JSON.stringify(res));
+}
+
+function checkGuard_fail() {
+  WitGas.guard('確認_guard失敗', function () { throw new TypeError('ここは記録・通知に書かれない'); }, GUARD);
+}
+
+function checkGuard_slow() {
+  WitGas.guard('確認_guard長い', function () { Utilities.sleep(60 * 1000); }, GUARD);
+}
+
+function checkGuard_resume() {
+  return WitGas.guard('確認_guard続き', function () {
+    return WitGas.resume.run({
+      key: '確認_guard', total: 10, handler: 'checkGuard_resume',
+      step: function () { Utilities.sleep(60 * 1000); }
+    });
+  }, GUARD);
+}
+
+function checkGuard_badConfig() {
+  WitGas.guard('確認_guard設定', function () { console.log('ここは動かない'); },
+    { log: { spreadsheetId: LOG_ID }, notify: { to: 'ops@example' } });
+}
+```
+
 ## 確認する項目
 
 ### lock
@@ -196,6 +231,17 @@ function checkNotify() {
 | N2 | N1 のメールを見る | 2 通（`TypeError` と `RangeError`）。件名が `[WitGas] 失敗: 確認_通知 (TypeError)` など。本文の時刻が日本時間で、「ここは書かれない」がない |
 | N3 | N1 から 1 時間以内にもう一度 `checkNotify` を実行 | 3 つとも `throttled` になり、メールは届かない |
 | N4 | N1 から 1 時間以上たってから `checkNotify` を実行 | また 2 通届く |
+
+### guard
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| G1 | `checkGuard_ok` を実行 | `status` が `success`、`count` が 3。実行記録に「確認_guard成功／成功／3」。メールは来ない |
+| G2 | `checkGuard_fail` を実行 | 「実行数」画面で失敗になり、そこにエラーのメッセージが出る。実行記録に「失敗／TypeError」。メールが 1 通届き、本文に実行記録の URL がある。実行記録とメールに「ここは記録・通知に書かれない」がない |
+| G3 | G2 を 1 時間以内にもう一度実行 | 実行記録に 2 行目の「失敗」。メールは来ない |
+| G4 | `checkGuard_slow` を実行し、終わる前に別のタブでもう一度 `checkGuard_slow` を実行 | 後の方は待たずに終わり、実行記録に「スキップ」（メッセージ `locked`）。メールは来ない |
+| G5 | `checkGuard_resume` を実行し、15 分ほど待つ | 実行記録に「続きあり（4, cursor 4, runs 1）」「続きあり（4, cursor 8, runs 2）」「成功（2, cursor 10, runs 3）」。トリガーとプロパティが残らない |
+| G6 | `checkGuard_badConfig` を実行 | すぐにエラー（`opts.to has an invalid address`）。「ここは動かない」は出ず、実行記録もメールもない |
 
 ## 結果の記録
 

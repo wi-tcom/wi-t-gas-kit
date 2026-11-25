@@ -48,16 +48,10 @@ WitGas.runlog = (function () {
   function append(entry, opts) {
     var row = toRow_(entry);
     opts = opts || {};
-    var maxRows = opts.maxRows === undefined ? DEFAULT_MAX_ROWS : opts.maxRows;
-    if (!isNonNegInt_(maxRows) || maxRows < 1) {
-      throw new RangeError('WitGas.runlog.append: opts.maxRows must be an integer >= 1');
-    }
-    var sheetName = opts.sheetName === undefined ? DEFAULT_SHEET_NAME : opts.sheetName;
-    if (typeof sheetName !== 'string' || sheetName.trim() === '') {
-      throw new TypeError('WitGas.runlog.append: opts.sheetName must be a non-empty string');
-    }
+    var cfg = checkOptions_(opts, 'append');
+    var maxRows = cfg.maxRows;
 
-    var sheet = getSheet_(openSpreadsheet_(opts), sheetName);
+    var sheet = getSheet_(openSpreadsheet_(opts), cfg.sheetName);
     sheet.appendRow(row);
     var lastRow = sheet.getLastRow();
     sheet.getRange(lastRow, 1, 1, 2).setNumberFormat(DATE_FORMAT);
@@ -70,6 +64,38 @@ WitGas.runlog = (function () {
       lastRow -= trimmed;
     }
     return { row: lastRow, trimmed: trimmed };
+  }
+
+  /**
+   * opts だけを確かめる（スプレッドシートには触らない）。おかしければ投げる。
+   * guard が実行の前に設定の誤りに気づくために使う。
+   */
+  function validateOptions(opts) {
+    if (opts !== undefined && (opts === null || typeof opts !== 'object')) {
+      throw new TypeError('WitGas.runlog.validateOptions: opts must be an object');
+    }
+    checkOptions_(opts || {}, 'validateOptions');
+    return true;
+  }
+
+  function checkOptions_(opts, fnName) {
+    var where = 'WitGas.runlog.' + fnName + ': ';
+    var maxRows = opts.maxRows === undefined ? DEFAULT_MAX_ROWS : opts.maxRows;
+    if (!isNonNegInt_(maxRows) || maxRows < 1) {
+      throw new RangeError(where + 'opts.maxRows must be an integer >= 1');
+    }
+    var sheetName = opts.sheetName === undefined ? DEFAULT_SHEET_NAME : opts.sheetName;
+    if (typeof sheetName !== 'string' || sheetName.trim() === '') {
+      throw new TypeError(where + 'opts.sheetName must be a non-empty string');
+    }
+    if (opts.spreadsheetId !== undefined &&
+        (typeof opts.spreadsheetId !== 'string' || opts.spreadsheetId.trim() === '')) {
+      throw new TypeError(where + 'opts.spreadsheetId must be a non-empty string');
+    }
+    if (opts.spreadsheet !== undefined && (opts.spreadsheet === null || typeof opts.spreadsheet !== 'object')) {
+      throw new TypeError(where + 'opts.spreadsheet must be a Spreadsheet');
+    }
+    return { maxRows: maxRows, sheetName: sheetName };
   }
 
   function toRow_(entry) {
@@ -111,9 +137,6 @@ WitGas.runlog = (function () {
   function openSpreadsheet_(opts) {
     if (opts.spreadsheet) return opts.spreadsheet;
     if (opts.spreadsheetId !== undefined) {
-      if (typeof opts.spreadsheetId !== 'string' || opts.spreadsheetId.trim() === '') {
-        throw new TypeError('WitGas.runlog.append: opts.spreadsheetId must be a non-empty string');
-      }
       return SpreadsheetApp.openById(opts.spreadsheetId);
     }
     var active = SpreadsheetApp.getActiveSpreadsheet();
@@ -161,6 +184,7 @@ WitGas.runlog = (function () {
 
   return {
     append: append,
+    validateOptions: validateOptions,
     HEADER: HEADER.slice(),
     RESULT_LABELS: Object.freeze(Object.assign({}, RESULT_LABELS)),
     DEFAULT_SHEET_NAME: DEFAULT_SHEET_NAME,

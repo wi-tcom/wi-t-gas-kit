@@ -92,21 +92,7 @@ WitGas.notify = (function () {
     if (info.count !== undefined && info.count !== null && !isNonNegInt_(info.count)) {
       throw new RangeError('WitGas.notify.failure: info.count must be an integer >= 0');
     }
-    if (!opts || typeof opts !== 'object') {
-      throw new TypeError('WitGas.notify.failure: opts.to is required');
-    }
-    var to = normalizeTo_(opts.to);
-    var throttleMs = opts.throttleMs === undefined ? DEFAULT_THROTTLE_MS : opts.throttleMs;
-    if (!isNonNegInt_(throttleMs) || throttleMs < 60000 || throttleMs > MAX_THROTTLE_MS) {
-      throw new RangeError('WitGas.notify.failure: opts.throttleMs must be an integer in 60000..' + MAX_THROTTLE_MS);
-    }
-    var subjectPrefix = opts.subjectPrefix === undefined ? DEFAULT_SUBJECT_PREFIX : opts.subjectPrefix;
-    if (typeof subjectPrefix !== 'string') {
-      throw new TypeError('WitGas.notify.failure: opts.subjectPrefix must be a string');
-    }
-    if (opts.linkUrl !== undefined && (typeof opts.linkUrl !== 'string' || !/^https:\/\//.test(opts.linkUrl))) {
-      throw new TypeError('WitGas.notify.failure: opts.linkUrl must be an https URL');
-    }
+    var o = checkOptions_(opts, 'failure');
 
     var errorType = info.errorType;
     if (errorType === undefined || errorType === null) {
@@ -117,32 +103,64 @@ WitGas.notify = (function () {
       errorType: oneLine_(errorType, MAX_ERROR_TYPE_LENGTH),
       at: info.at,
       count: info.count,
-      to: to,
-      throttleMs: throttleMs,
-      subjectPrefix: oneLine_(subjectPrefix, 50),
+      to: o.to,
+      throttleMs: o.throttleMs,
+      subjectPrefix: oneLine_(o.subjectPrefix, 50),
       linkUrl: opts.linkUrl,
       timeZone: opts.timeZone,
       cache: opts.cache
     };
   }
 
-  function normalizeTo_(to) {
+  /**
+   * opts だけを確かめる（メールは送らない）。おかしければ投げる。
+   * guard が実行の前に設定の誤り（送り先の書き間違いなど）に気づくために使う。
+   */
+  function validateOptions(opts) {
+    checkOptions_(opts, 'validateOptions');
+    return true;
+  }
+
+  function checkOptions_(opts, fnName) {
+    var where = 'WitGas.notify.' + fnName + ': ';
+    if (!opts || typeof opts !== 'object') {
+      throw new TypeError(where + 'opts.to is required');
+    }
+    var to = normalizeTo_(opts.to, where);
+    var throttleMs = opts.throttleMs === undefined ? DEFAULT_THROTTLE_MS : opts.throttleMs;
+    if (!isNonNegInt_(throttleMs) || throttleMs < 60000 || throttleMs > MAX_THROTTLE_MS) {
+      throw new RangeError(where + 'opts.throttleMs must be an integer in 60000..' + MAX_THROTTLE_MS);
+    }
+    var subjectPrefix = opts.subjectPrefix === undefined ? DEFAULT_SUBJECT_PREFIX : opts.subjectPrefix;
+    if (typeof subjectPrefix !== 'string') {
+      throw new TypeError(where + 'opts.subjectPrefix must be a string');
+    }
+    if (opts.linkUrl !== undefined && (typeof opts.linkUrl !== 'string' || !/^https:\/\//.test(opts.linkUrl))) {
+      throw new TypeError(where + 'opts.linkUrl must be an https URL');
+    }
+    if (opts.timeZone !== undefined && (typeof opts.timeZone !== 'string' || opts.timeZone === '')) {
+      throw new TypeError(where + 'opts.timeZone must be a non-empty string');
+    }
+    return { to: to, throttleMs: throttleMs, subjectPrefix: subjectPrefix };
+  }
+
+  function normalizeTo_(to, where) {
     var list;
     if (typeof to === 'string') {
       list = to.split(',');
     } else if (Array.isArray(to)) {
       list = to.slice();
     } else {
-      throw new TypeError('WitGas.notify.failure: opts.to is required');
+      throw new TypeError(where + 'opts.to is required');
     }
     list = list.map(function (a) { return typeof a === 'string' ? a.trim() : a; })
       .filter(function (a) { return a !== ''; });
     if (list.length === 0) {
-      throw new TypeError('WitGas.notify.failure: opts.to is required');
+      throw new TypeError(where + 'opts.to is required');
     }
     for (var i = 0; i < list.length; i++) {
       if (typeof list[i] !== 'string' || !EMAIL_RE.test(list[i])) {
-        throw new TypeError('WitGas.notify.failure: opts.to has an invalid address (#' + (i + 1) + ')');
+        throw new TypeError(where + 'opts.to has an invalid address (#' + (i + 1) + ')');
       }
     }
     return list.join(',');
@@ -172,6 +190,7 @@ WitGas.notify = (function () {
 
   return {
     failure: failure,
+    validateOptions: validateOptions,
     DEFAULT_THROTTLE_MS: DEFAULT_THROTTLE_MS,
     MAX_THROTTLE_MS: MAX_THROTTLE_MS
   };

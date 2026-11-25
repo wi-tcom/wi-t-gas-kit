@@ -15,7 +15,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.lock` | Prevent concurrent runs | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.guard` | One-line wrapper combining the above | Planned |
+| `WitGas.guard` | One-line wrapper combining the above | Implemented (Node tests only; not yet verified on GAS) |
 
 ## Installation
 
@@ -49,6 +49,80 @@ WitGas.lock.run('summary', fn, { lock: LockService.getScriptLock() });
 WitGas.resume.run({ /* ... */ properties: PropertiesService.getScriptProperties(), scriptApp: ScriptApp });
 ```
 
+## WitGas.guard — the entry point (start here)
+
+Wraps lock (no concurrent runs) → run → runlog (run log) → notify on failure in one line.
+Samples and deliverables are wrapped with this by default.
+
+```js
+// Keep the settings in one place (where a successor will look)
+var GUARD = {
+  log:    { spreadsheetId: '1AbC... (ID of the spreadsheet holding the log)' },
+  notify: { to: 'ops@example.com' }
+};
+
+function dailySummary() {   // called from a time-driven trigger
+  WitGas.guard('daily-summary', function (ctx) {
+    var n = summarize_();    // your work here
+    ctx.setCount(n);         // shown in the "count" column
+  }, GUARD);
+}
+```
+
+| What happened | Run log | Notification | `status` |
+|---------------|---------|--------------|----------|
+| Finished | success (成功) | none | `success` |
+| `resume` paused | continued (続きあり) | none | `continued` |
+| Previous run still running | skipped (スキップ) | none | `skipped` |
+| Failed | failure (失敗) with error type | yes (at most about one per hour) | — (rethrown) |
+
+### With resume
+
+If `fn` returns the result of `WitGas.resume.run`, paused runs are logged as "continued" and the last one as "success",
+with the count of items processed in that run and a message such as `cursor 4, runs 1`.
+
+```js
+function makeInvoices() {   // called by the daily trigger and by the continuation trigger
+  return WitGas.guard('invoice-pdf', function () {
+    var rows = loadRows_();
+    return WitGas.resume.run({
+      key: 'invoicePdf',
+      total: rows.length,
+      handler: 'makeInvoices',
+      step: function (i) { /* one row at a time (see "Make items safe to process twice") */ }
+    });
+  }, GUARD);
+}
+```
+
+### opts
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `log` | (required) | Run-log settings (`WitGas.runlog.append` opts), or `false`. |
+| `notify` | (required) | Notification settings (`WitGas.notify.failure` opts), or `false`. |
+| `waitMs` | `0` | Maximum milliseconds to wait for the lock. |
+| `lock` | script lock | Lock to use (`opts.lock` of `WitGas.lock.run`). |
+| `rethrow` | `true` | Rethrow the error after logging and notifying. If `false`, return `{status:'failure', errorType}` instead. |
+
+`log` and `notify` are required so they are not forgotten; write `false` to turn one off.
+
+### ctx (argument of fn)
+
+- `ctx.setCount(n)` sets the count; `ctx.addCount(n)` adds to it (`n` defaults to 1).
+- `ctx.setMessage(s)` sets the log message (up to 100 characters). No personal or business data.
+- On failure, the count so far is still logged and mailed.
+
+### Rules
+
+- **Settings are checked on every call, before running.** A mistyped address fails on the first run, not on the first failure (nothing is logged or mailed in that case).
+- On failure: log → notify → rethrow. Because it is rethrown, the execution shows as failed in Apps Script's Executions page, where the error message can be read.
+  The run log and the mail contain only the error type.
+- If the run log cannot be written, the job result is unchanged and a notification with error type `runlog:<type>` is sent.
+- If the notification cannot be sent, it is logged and the original error is still rethrown.
+- The mail includes the run-log URL built from `log.spreadsheetId` (or `log.spreadsheet`), unless `notify.linkUrl` is given.
+- When copying `guard.js`, also copy `lock.js` (and `runlog.js` / `notify.js` if you use logging / notification).
+
 ## WitGas.lock — prevent concurrent runs
 
 Runs the function only when the script lock (`LockService.getScriptLock()`) is acquired, and always releases it afterwards, even on failure.
@@ -77,7 +151,7 @@ function dailyJob() {   // called from a time-driven trigger
 | Name | Default | Description |
 |------|---------|-------------|
 | `waitMs` | `0` | Maximum milliseconds to wait for the lock. 0 skips immediately. |
-| `onSkip` | none | Called on skip with `{name, result:'skipped', reason:'locked', startedAt, endedAt}`. Hook for the run-log sheet (`WitGas.runlog`). |
+| `onSkip` | none | Called on skip with `{name, result:'skipped', reason:'locked', startedAt, endedAt}`. Hook for the run-log sheet (`WitGas.runlog`); `WitGas.guard` uses it to log skips. |
 | `lock` | `LockService.getScriptLock()` | The lock to use; any object with `tryLock(ms)` and `releaseLock()`. |
 
 ### Rules
@@ -112,7 +186,7 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 }
 ```
 
-`resume` does not prevent concurrent runs by itself. Call it inside `WitGas.lock.run` as above.
+`resume` does not prevent concurrent runs by itself. Call it inside `WitGas.lock.run` as above, or wrap it with `WitGas.guard` (which adds logging and notification).
 
 ### Options
 
@@ -270,6 +344,7 @@ The mail (in Japanese) contains the job name, error type, time, count and the li
 
 | Scope | Part | Reason |
 |-------|------|--------|
+| (no extra) | `WitGas.guard` | Only the scopes of the parts it uses (lock, runlog, notify). With `log: false`, `spreadsheets` is not needed; with `notify: false`, `script.send_mail` is not needed |
 | (none) | `WitGas.lock` | Uses only `LockService` and `console`; expected to need no extra scope (verified by L1) |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | Create and delete continuation triggers (`ScriptApp`). Saving the cursor (`PropertiesService`) is expected to need no extra scope (verified by R8) |
 
@@ -286,6 +361,7 @@ If `runlog` writes only to the spreadsheet the script is bound to (no `spreadshe
   To do it by hand, delete the continuation trigger (one-time trigger for the `handler` function) on the Triggers page,
   and delete `WitGas.resume:<key>` under Project Settings → Script Properties.
   If you delete only the trigger, the next call to `run` continues from the cursor.
+- `WitGas.guard` creates no triggers and no script properties (if it wraps `resume`, follow the `resume` steps above).
 - `WitGas.runlog` and `WitGas.notify` create no triggers and no script properties.
   To stop logging, remove the call; to change recipients, change `opts.to`. A deleted run-log sheet is recreated on the next write.
 - Triggers that call your job on a schedule (e.g. daily) are your own; delete them too to stop completely.

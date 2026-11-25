@@ -15,7 +15,7 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 | `WitGas.lock` | 二重実行の防止 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.resume` | 6 分の上限の前に区切って続きを実行 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 実装済み（Node のテストのみ。実機確認は未） |
-| `WitGas.guard` | 上の部品を 1 行で包む入り口 | 予定 |
+| `WitGas.guard` | 上の部品を 1 行で包む入り口 | 実装済み（Node のテストのみ。実機確認は未） |
 
 ## 入れ方
 
@@ -49,6 +49,80 @@ WitGas.lock.run('集計', fn, { lock: LockService.getScriptLock() });
 WitGas.resume.run({ /* ... */ properties: PropertiesService.getScriptProperties(), scriptApp: ScriptApp });
 ```
 
+## WitGas.guard — まとめの入り口（まずはこれ）
+
+lock（二重実行の防止）→ 実行 → runlog（実行記録）→ 失敗したら notify（通知）を 1 行で包みます。
+見本や納品物は、基本これで包みます。
+
+```js
+// 設定は 1 か所にまとめる（引き継ぎのときに見る場所）
+var GUARD = {
+  log:    { spreadsheetId: '1AbC...（実行記録を置くスプレッドシートの ID）' },
+  notify: { to: 'ops@example.com' }
+};
+
+function dailySummary() {   // 時間主導型トリガーから呼ぶ
+  WitGas.guard('日次集計', function (ctx) {
+    var n = summarize_();    // ここに処理を書く
+    ctx.setCount(n);         // 実行記録の「件数」に出る
+  }, GUARD);
+}
+```
+
+| 起きたこと | 実行記録 | 通知 | 戻り値の `status` |
+|------------|----------|------|-------------------|
+| 最後まで動いた | 成功 | なし | `success` |
+| `resume` が区切った | 続きあり | なし | `continued` |
+| 前の回がまだ動いていた | スキップ | なし | `skipped` |
+| 失敗した | 失敗（エラー種別） | あり（1 時間に 1 通まで） | — （エラーを投げ直す） |
+
+### resume と組み合わせる
+
+`fn` が `WitGas.resume.run` の結果を返すと、区切った回は「続きあり」、最後の回は「成功」になり、
+件数にはその回に処理した数、メッセージには `cursor 4, runs 1` のような進み具合が入ります。
+
+```js
+function makeInvoices() {   // 毎日のトリガーからも、続きのトリガーからもこの関数が呼ばれる
+  return WitGas.guard('請求書PDF', function () {
+    var rows = loadRows_();
+    return WitGas.resume.run({
+      key: 'invoicePdf',
+      total: rows.length,
+      handler: 'makeInvoices',
+      step: function (i) { /* 1 行ずつ処理（下の「二度処理しても困らない書き方」を参照） */ }
+    });
+  }, GUARD);
+}
+```
+
+### opts
+
+| 名前 | 既定 | 内容 |
+|------|------|------|
+| `log` | （必須） | 実行記録の設定（`WitGas.runlog.append` の opts）。残さないなら `false`。 |
+| `notify` | （必須） | 通知の設定（`WitGas.notify.failure` の opts）。送らないなら `false`。 |
+| `waitMs` | `0` | ロックが空くのを待つ最大ミリ秒。 |
+| `lock` | スクリプトロック | 使うロック（`WitGas.lock.run` の `opts.lock`）。 |
+| `rethrow` | `true` | 失敗したとき、記録と通知のあとにエラーを投げ直す。`false` なら投げずに `{status:'failure', errorType}` を返す。 |
+
+`log` と `notify` は、書き忘れを防ぐため必須にしています。使わないときは `false` と書いてください。
+
+### ctx（fn の引数）
+
+- `ctx.setCount(n)`：件数を決める。`ctx.addCount(n)`：件数を足す（`n` を省けば 1）。
+- `ctx.setMessage(s)`：実行記録のメッセージ（100 文字まで）。個人情報や業務データを入れないでください。
+- 失敗した場合も、それまでに数えた件数は実行記録と通知に残ります。
+
+### 決まりごと
+
+- **設定は毎回、処理の前に確かめます。** 送り先の書き間違いなどは、失敗が起きてからではなく、最初の実行でエラーになります（このときは記録も通知もしません）。
+- 失敗したときは、実行記録 → 通知 → 投げ直し の順です。投げ直すので、Apps Script の「実行数」画面でも「失敗」になり、エラーのメッセージはそこで確認できます。
+  実行記録と通知に残すのはエラー種別だけです。
+- 実行記録が書けなかったときは、処理の結果は変えずに、エラー種別 `runlog:<種別>` で通知します。
+- 通知が送れなかったときは、ログに残して、元のエラーを投げ直します。
+- 通知の本文には、`log.spreadsheetId`（または `log.spreadsheet`）から作った実行記録の URL が入ります。`notify.linkUrl` を渡せばそちらを使います。
+- `guard` だけをコピーする場合は、`lock.js`（と、記録・通知を使うなら `runlog.js`・`notify.js`）も一緒に入れてください。
+
 ## WitGas.lock — 二重実行の防止
 
 スクリプトロック（`LockService.getScriptLock()`）が取れたときだけ処理を動かし、終わったら（失敗しても）必ず解放します。
@@ -77,7 +151,7 @@ function dailyJob() {   // 時間主導型トリガーから呼ぶ関数
 | 名前 | 既定 | 内容 |
 |------|------|------|
 | `waitMs` | `0` | ロックが空くのを待つ最大ミリ秒。0 なら待たずにスキップ。 |
-| `onSkip` | なし | スキップしたときに呼ぶ関数。`{name, result:'skipped', reason:'locked', startedAt, endedAt}` を受け取る。実行記録シート（`WitGas.runlog`）につなぐ入口。 |
+| `onSkip` | なし | スキップしたときに呼ぶ関数。`{name, result:'skipped', reason:'locked', startedAt, endedAt}` を受け取る。実行記録シート（`WitGas.runlog`）につなぐ入口。`WitGas.guard` はここを使って「スキップ」を記録します。 |
 | `lock` | `LockService.getScriptLock()` | 使うロック。`tryLock(ms)` と `releaseLock()` を持つもの。 |
 
 ### 決まりごと
@@ -112,7 +186,7 @@ function makeInvoices() {   // 毎日のトリガーからも、続きのトリ�
 }
 ```
 
-`resume` 自体は二重実行を防ぎません。上の例のように `WitGas.lock.run` の中で呼んでください。
+`resume` 自体は二重実行を防ぎません。上の例のように `WitGas.lock.run` の中で呼ぶか、`WitGas.guard` で包んでください（実行記録と通知もつきます）。
 
 ### 引数
 
@@ -287,6 +361,7 @@ WitGas.notify.failure(
 
 | 権限 | 使う部品 | 理由 |
 |------|----------|------|
+| （追加なし） | `WitGas.guard` | 中で使う部品（lock・runlog・notify）の権限だけ。`log: false` なら `spreadsheets`、`notify: false` なら `script.send_mail` は要らない |
 | （なし） | `WitGas.lock` | `LockService` と `console` だけを使う。追加の権限を求めない想定（実機確認は L1） |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | 続きを動かすトリガーを作る・消す（`ScriptApp`）。カーソルの保存（`PropertiesService`）は追加の権限を求めない想定（実機確認は R8） |
 
@@ -304,6 +379,7 @@ WitGas.notify.failure(
   手で止める場合は、「トリガー」画面から続きのトリガー（関数名が `handler`、1 回だけ動くもの）を消し、
   「プロジェクトの設定 → スクリプト プロパティ」から `WitGas.resume:<key>` を消します。
   トリガーだけを消すと、次に `run` が呼ばれたときにカーソルの続きから動きます。
+- `WitGas.guard` はトリガーもスクリプトのプロパティも作りません（中で `resume` を使う場合は、上の `resume` の止め方に従ってください）。
 - `WitGas.runlog` と `WitGas.notify` は、トリガーもスクリプトのプロパティも作りません。
   記録をやめるには呼んでいる行を消し、通知の宛先を変えるには `opts.to` を変えます。「実行記録」シートは消しても次に書くときに作り直されます。
 - どの場合も、毎日など決まった時刻に呼んでいるトリガーは利用者が作ったものです。完全に止めるならそれも消してください。
