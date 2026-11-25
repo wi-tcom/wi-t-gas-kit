@@ -9,6 +9,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createClock, createFakeDate } = require('../mocks/clock');
 const { createLockService } = require('../mocks/lock-service');
+const { createPropertiesService } = require('../mocks/properties-service');
+const { createScriptApp } = require('../mocks/script-app');
 
 const SRC_DIR = path.join(__dirname, '..', '..', 'src');
 
@@ -34,11 +36,15 @@ function createGasEnv(options) {
   const clock = createClock(opts.startMs);
   const { logs, console } = createConsole();
   const LockService = createLockService(clock);
+  const PropertiesService = createPropertiesService();
+  const ScriptApp = createScriptApp(clock);
 
   const sandbox = {
     console,
     Date: createFakeDate(clock),
-    LockService
+    LockService,
+    PropertiesService,
+    ScriptApp
   };
   const context = vm.createContext(sandbox);
   const baseKeys = new Set(Object.keys(sandbox));
@@ -57,6 +63,12 @@ function createGasEnv(options) {
     clock,
     logs,
     LockService,
+    PropertiesService,
+    ScriptApp,
+    /** 次に動くトリガーを発火させる（時計もその時刻まで進む） */
+    fireNext() {
+      return ScriptApp.fireNext(context);
+    },
     /** src が増やしたグローバル名（WitGas だけであるべき） */
     addedGlobals() {
       return Object.keys(context).filter((k) => !baseKeys.has(k));

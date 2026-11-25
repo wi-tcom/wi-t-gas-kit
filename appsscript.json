@@ -2,5 +2,7 @@
   "timeZone": "Asia/Tokyo",
   "runtimeVersion": "V8",
   "exceptionLogging": "STACKDRIVER",
-  "oauthScopes": []
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.scriptapp"
+  ]
 }
