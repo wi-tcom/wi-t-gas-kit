@@ -7,7 +7,7 @@ Node のテストは GAS のサービスを偽物に差し替えて動かして�
 ## 準備
 
 1. 確認用の新しいスプレッドシートを作り、「拡張機能 → Apps Script」を開く。
-2. `src/lock.js` と `src/resume.js` の中身を、スクリプトエディタの新しいファイル `lock.gs`・`resume.gs` に貼る。
+2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
 3. 「プロジェクトの設定 → 『appsscript.json』マニフェスト ファイルをエディタで表示する」をオンにし、
    `appsscript.json` を本リポジトリのものに置き換える。
 4. 次の確認用の関数を別ファイル `check.gs` に貼る。
@@ -108,6 +108,46 @@ function checkTrigger_noop() {
 }
 ```
 
+## 確認用の関数（runlog・notify）
+
+`checkLog.gs` に貼ります。`LOG_ID` には確認用とは別のスプレッドシートの ID を、`TO` には受け取れるアドレスを入れます。
+
+```js
+var LOG_ID = '（別のスプレッドシートの ID）';
+var TO = '（受け取るアドレス）';
+
+function checkRunlog_basic() {
+  var t0 = new Date();
+  ['success', 'failure', 'skipped', 'continued'].forEach(function (r) {
+    WitGas.runlog.append({ name: '確認_記録', result: r, startedAt: t0, count: 1,
+      error: r === 'failure' ? new TypeError('ここは書かれない') : undefined }, { spreadsheetId: LOG_ID });
+  });
+}
+
+function checkRunlog_trim() {
+  for (var i = 1; i <= 5; i++) {
+    WitGas.runlog.append({ name: '確認_上限' + i, result: 'success' },
+      { spreadsheetId: LOG_ID, sheetName: '確認_上限', maxRows: 3 });
+  }
+}
+
+function checkRunlog_formula() {
+  WitGas.runlog.append({ name: '=1+1', result: 'success', message: '@x' }, { spreadsheetId: LOG_ID });
+}
+
+function checkRunlog_active() {
+  // スクリプトが付いたスプレッドシート（確認用）に書く
+  WitGas.runlog.append({ name: '確認_開いている', result: 'success' });
+}
+
+function checkNotify() {
+  var res1 = WitGas.notify.failure({ name: '確認_通知', error: new TypeError('ここは書かれない') }, { to: TO });
+  var res2 = WitGas.notify.failure({ name: '確認_通知', error: new TypeError('x') }, { to: TO });
+  var res3 = WitGas.notify.failure({ name: '確認_通知', error: new RangeError('x') }, { to: TO });
+  console.log(JSON.stringify([res1, res2, res3]));
+}
+```
+
 ## 確認する項目
 
 ### lock
@@ -135,6 +175,27 @@ function checkTrigger_noop() {
 | R6 | `checkResume` を実行し、続きが動く前に `checkResume_cleanup` を実行 | `{"deletedTrigger":true,"deletedState":true}`。トリガーもプロパティも消え、そのあと続きは動かない |
 | R7 | ライブラリとして追加し（識別子 `WitGasLib`）、R1〜R3 を実行 | 続きのトリガーとプロパティが、呼び出し側のプロジェクトにできるか、ライブラリ側にできるかを記録する |
 | R8 | R1 の承認のあと、`oauthScopes` に `script.scriptapp` だけがある状態で R1〜R3 が動く | プロパティの保存で権限のエラーが出ない |
+
+### runlog
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| W1 | `checkRunlog_basic` を実行 | 承認画面で `spreadsheets` の権限を求められる。`LOG_ID` のスプレッドシートに「実行記録」シートができ、見出し（開始・終了・処理名・結果・件数・エラー種別・メッセージ）が太字で 1 行目が固定 |
+| W2 | W1 のシートを見る | 4 行あり、結果が 成功・失敗・スキップ・続きあり。失敗の行のエラー種別が `TypeError` で、「ここは書かれない」がどこにもない。開始・終了が `yyyy-mm-dd hh:mm:ss` で表示される |
+| W3 | `checkRunlog_trim` を実行 | 「確認_上限」シートに見出しと 3 行（確認_上限3〜5）だけが残る |
+| W4 | `checkRunlog_formula` を実行 | 処理名のセルが `=1+1` の文字のまま表示され、`2` にならない。メッセージも `@x` の文字のまま |
+| W5 | W3 を 5,000 行の上限で試す（任意）：`maxRows` を外し、5,001 回以上書く関数を `resume` で区切って動かす | 見出しと 5,000 行のまま、古い行から消える。1 回の追記にかかる時間を「実行数」から記録する |
+| W6 | `checkRunlog_active` を実行 | 確認用のスプレッドシート（スクリプトが付いたもの）に「実行記録」ができる |
+| W7 | `oauthScopes` の `spreadsheets` を `spreadsheets.currentonly` に変えて W6 と W1 を実行（終わったら戻す） | W6 は動き、W1（`openById`）は権限のエラーになるかを記録する |
+
+### notify
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| N1 | `checkNotify` を実行 | 承認画面で `script.send_mail` の権限を求められる。結果が `[{"sent":true},{"sent":false,"reason":"throttled"},{"sent":true}]`。`CacheService`・`Session`・`Utilities` で権限のエラーが出ない |
+| N2 | N1 のメールを見る | 2 通（`TypeError` と `RangeError`）。件名が `[WitGas] 失敗: 確認_通知 (TypeError)` など。本文の時刻が日本時間で、「ここは書かれない」がない |
+| N3 | N1 から 1 時間以内にもう一度 `checkNotify` を実行 | 3 つとも `throttled` になり、メールは届かない |
+| N4 | N1 から 1 時間以上たってから `checkNotify` を実行 | また 2 通届く |
 
 ## 結果の記録
 

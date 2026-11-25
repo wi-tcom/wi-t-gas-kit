@@ -14,7 +14,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 |------|---------|--------|
 | `WitGas.lock` | Prevent concurrent runs | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (Node tests only; not yet verified on GAS) |
-| `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Planned |
+| `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.guard` | One-line wrapper combining the above | Planned |
 
 ## Installation
@@ -77,7 +77,7 @@ function dailyJob() {   // called from a time-driven trigger
 | Name | Default | Description |
 |------|---------|-------------|
 | `waitMs` | `0` | Maximum milliseconds to wait for the lock. 0 skips immediately. |
-| `onSkip` | none | Called on skip with `{name, result:'skipped', reason:'locked', startedAt, endedAt}`. Hook for the run-log sheet (`WitGas.runlog`, planned). |
+| `onSkip` | none | Called on skip with `{name, result:'skipped', reason:'locked', startedAt, endedAt}`. Hook for the run-log sheet (`WitGas.runlog`). |
 | `lock` | `LockService.getScriptLock()` | The lock to use; any object with `tryLock(ms)` and `releaseLock()`. |
 
 ### Rules
@@ -182,6 +182,88 @@ Script property `WitGas.resume:<key>` holds this JSON. It contains no business d
 - `WitGas.resume.get(key)`: saved progress `{cursor, runs, firstStartedAt, scheduled}`, or `null`.
 - `WitGas.resume.cleanup(key)`: deletes the continuation trigger and the saved state — to stop midway or start over. Triggers you created yourself are never deleted, even with the same function name.
 
+## WitGas.runlog — run log
+
+Appends one row per execution to a "実行記録" (run log) sheet in the given spreadsheet, creating the sheet if needed.
+
+```js
+var LOG = { spreadsheetId: '1AbC... (ID of the spreadsheet holding the log)' };
+
+WitGas.runlog.append({
+  name: 'daily-summary',
+  result: 'success',          // 'success' | 'failure' | 'skipped' | 'continued'
+  startedAt: startedAt,
+  count: 120
+}, LOG);
+```
+
+Columns (headers are in Japanese): start (開始), end (終了), name (処理名), result (結果), count (件数), error type (エラー種別), message (メッセージ).
+Results are written as 成功 (success), 失敗 (failure), スキップ (skipped), 続きあり (continued).
+
+### entry
+
+| Name | Description |
+|------|-------------|
+| `name` | Job name (required), up to 100 characters. |
+| `result` | `success`, `failure`, `skipped` or `continued` (required). |
+| `startedAt` / `endedAt` | `Date`s. `endedAt` defaults to now; `startedAt` defaults to `endedAt`. |
+| `count` | Item count (integer >= 0). |
+| `error` | An error. **Only its type (e.g. `TypeError`) is written, never its message** (it may contain business data). |
+| `errorType` | To write the type directly. |
+| `message` | Short message. Newlines are removed; cut to 100 characters. Do not include personal or business data. |
+
+### opts
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `spreadsheetId` | — | Spreadsheet ID to write to. |
+| `spreadsheet` | — | Spreadsheet object, instead of the ID. |
+| (neither) | active spreadsheet | For scripts bound to a spreadsheet; error if none. |
+| `sheetName` | `実行記録` | Sheet name. |
+| `maxRows` | `5000` | Rows to keep (excluding the header). Oldest rows are deleted beyond this. |
+
+### Rules
+
+- Text starting with `=`, `+`, `-` or `@` is prefixed with `'` so it is not read as a formula.
+- An existing sheet's header is not rewritten (keep the column order above).
+- Write failures are thrown.
+
+## WitGas.notify — failure notification
+
+Sends a mail with `MailApp` on failure. The same job with the same error type is notified at most once per hour.
+
+```js
+WitGas.notify.failure(
+  { name: 'invoice-pdf', error: e, count: 3 },
+  { to: 'ops@example.com', linkUrl: '(URL of the run-log sheet)' }
+);
+// → { sent: true }  or  { sent: false, reason: 'throttled' }
+```
+
+The mail (in Japanese) contains the job name, error type, time, count and the link. It never contains the error message.
+
+### info and opts
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `info.name` | (required) | Job name. |
+| `info.error` / `info.errorType` | type `Error` | Only the type is used. **The error message is never mailed.** |
+| `info.at` | now | When it happened. |
+| `info.count` | — | Item count. |
+| `opts.to` | (required) | Recipients: comma-separated string or array. |
+| `opts.throttleMs` | `3600000` (1 hour) | Suppression window, 1 minute to 6 hours. |
+| `opts.subjectPrefix` | `[WitGas]` | Subject prefix, e.g. the client's name. |
+| `opts.linkUrl` | — | URL to include in the body (must start with `https://`). |
+| `opts.timeZone` | script time zone | Time zone for the displayed time. |
+
+### Rules
+
+- The suppression marker is stored in the script cache of `CacheService` (key: `WitGas.notify:` + a digest of name and type).
+- The marker is set only after a successful send; a send failure is thrown and the next failure sends again.
+- `CacheService` entries may be evicted early; then another mail can arrive within the hour.
+  Two executions failing at the same moment may also send two mails. Think "usually one", not "at most one".
+- Newlines in the name and type are removed so the subject stays intact.
+
 ## Permissions (oauthScopes)
 
 `oauthScopes` in `appsscript.json` is set explicitly and kept minimal. Each new part adds its reason here.
@@ -191,7 +273,11 @@ Script property `WitGas.resume:<key>` holds this JSON. It contains no business d
 | (none) | `WitGas.lock` | Uses only `LockService` and `console`; expected to need no extra scope (verified by L1) |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | Create and delete continuation triggers (`ScriptApp`). Saving the cursor (`PropertiesService`) is expected to need no extra scope (verified by R8) |
 
-If you use only `lock`, you may remove `script.scriptapp`.
+| `https://www.googleapis.com/auth/spreadsheets` | `WitGas.runlog` | Open the spreadsheet by ID and write to it (`SpreadsheetApp.openById`) |
+| `https://www.googleapis.com/auth/script.send_mail` | `WitGas.notify` | Send failure mails (`MailApp`). `CacheService`, `Utilities` and `Session` are expected to need no extra scope (verified by N1) |
+
+You may remove scopes of parts you do not use.
+If `runlog` writes only to the spreadsheet the script is bound to (no `spreadsheetId`), `https://www.googleapis.com/auth/spreadsheets.currentonly` is expected to suffice instead of `spreadsheets` (verified by W7).
 
 ## How to stop
 
@@ -200,6 +286,8 @@ If you use only `lock`, you may remove `script.scriptapp`.
   To do it by hand, delete the continuation trigger (one-time trigger for the `handler` function) on the Triggers page,
   and delete `WitGas.resume:<key>` under Project Settings → Script Properties.
   If you delete only the trigger, the next call to `run` continues from the cursor.
+- `WitGas.runlog` and `WitGas.notify` create no triggers and no script properties.
+  To stop logging, remove the call; to change recipients, change `opts.to`. A deleted run-log sheet is recreated on the next write.
 - Triggers that call your job on a schedule (e.g. daily) are your own; delete them too to stop completely.
 
 ## Development

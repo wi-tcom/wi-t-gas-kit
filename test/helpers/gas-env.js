@@ -11,6 +11,10 @@ const { createClock, createFakeDate } = require('../mocks/clock');
 const { createLockService } = require('../mocks/lock-service');
 const { createPropertiesService } = require('../mocks/properties-service');
 const { createScriptApp } = require('../mocks/script-app');
+const { createSpreadsheetApp } = require('../mocks/spreadsheet-app');
+const { createMailApp } = require('../mocks/mail-app');
+const { createCacheService } = require('../mocks/cache-service');
+const { createUtilities, createSession } = require('../mocks/utilities');
 
 const SRC_DIR = path.join(__dirname, '..', '..', 'src');
 
@@ -38,13 +42,23 @@ function createGasEnv(options) {
   const LockService = createLockService(clock);
   const PropertiesService = createPropertiesService();
   const ScriptApp = createScriptApp(clock);
+  const SpreadsheetApp = createSpreadsheetApp();
+  const MailApp = createMailApp();
+  const CacheService = createCacheService(clock);
+  const Utilities = createUtilities();
+  const Session = createSession(opts.timeZone);
 
   const sandbox = {
     console,
     Date: createFakeDate(clock),
     LockService,
     PropertiesService,
-    ScriptApp
+    ScriptApp,
+    SpreadsheetApp,
+    MailApp,
+    CacheService,
+    Utilities,
+    Session
   };
   const context = vm.createContext(sandbox);
   const baseKeys = new Set(Object.keys(sandbox));
@@ -65,6 +79,9 @@ function createGasEnv(options) {
     LockService,
     PropertiesService,
     ScriptApp,
+    SpreadsheetApp,
+    MailApp,
+    CacheService,
     /** 次に動くトリガーを発火させる（時計もその時刻まで進む） */
     fireNext() {
       return ScriptApp.fireNext(context);

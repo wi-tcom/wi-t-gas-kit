@@ -14,7 +14,7 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 |------|------|------|
 | `WitGas.lock` | 二重実行の防止 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.resume` | 6 分の上限の前に区切って続きを実行 | 実装済み（Node のテストのみ。実機確認は未） |
-| `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 予定 |
+| `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.guard` | 上の部品を 1 行で包む入り口 | 予定 |
 
 ## 入れ方
@@ -77,7 +77,7 @@ function dailyJob() {   // 時間主導型トリガーから呼ぶ関数
 | 名前 | 既定 | 内容 |
 |------|------|------|
 | `waitMs` | `0` | ロックが空くのを待つ最大ミリ秒。0 なら待たずにスキップ。 |
-| `onSkip` | なし | スキップしたときに呼ぶ関数。`{name, result:'skipped', reason:'locked', startedAt, endedAt}` を受け取る。実行記録シート（`WitGas.runlog`、予定）につなぐ入口。 |
+| `onSkip` | なし | スキップしたときに呼ぶ関数。`{name, result:'skipped', reason:'locked', startedAt, endedAt}` を受け取る。実行記録シート（`WitGas.runlog`）につなぐ入口。 |
 | `lock` | `LockService.getScriptLock()` | 使うロック。`tryLock(ms)` と `releaseLock()` を持つもの。 |
 
 ### 決まりごと
@@ -182,6 +182,105 @@ function makeInvoices() {   // 毎日のトリガーからも、続きのトリ�
 - `WitGas.resume.get(key)`：保存している進み具合 `{cursor, runs, firstStartedAt, scheduled}`。なければ `null`。
 - `WitGas.resume.cleanup(key)`：続きのトリガーと保存を消す。途中でやめるとき、最初からやり直すとき。利用者が自分で作ったトリガーは、同じ関数名でも消しません。
 
+## WitGas.runlog — 実行記録
+
+指定したスプレッドシートの「実行記録」シートに、1 実行 1 行で残します。シートがなければ作ります。
+
+```js
+var LOG = { spreadsheetId: '1AbC...（実行記録を置くスプレッドシートの ID）' };
+
+WitGas.runlog.append({
+  name: '日次集計',
+  result: 'success',          // 'success' | 'failure' | 'skipped' | 'continued'
+  startedAt: startedAt,
+  count: 120
+}, LOG);
+```
+
+| 開始 | 終了 | 処理名 | 結果 | 件数 | エラー種別 | メッセージ |
+|------|------|--------|------|------|------------|------------|
+| 2026-01-05 09:00:00 | 2026-01-05 09:03:12 | 日次集計 | 成功 | 120 | | |
+| 2026-01-05 10:00:00 | 2026-01-05 10:00:01 | 請求書PDF | 失敗 | | TypeError | |
+
+### entry（1 行の中身）
+
+| 名前 | 内容 |
+|------|------|
+| `name` | 処理名（必須）。100 文字まで。 |
+| `result` | `success`→成功、`failure`→失敗、`skipped`→スキップ、`continued`→続きあり（必須）。 |
+| `startedAt` / `endedAt` | 開始・終了の `Date`。終了を省けば今、開始を省けば終了と同じ。 |
+| `count` | 件数（0 以上の整数）。 |
+| `error` | エラー。**種別（`TypeError` など）だけを書き、エラーのメッセージは書きません**（業務データを含みうるため）。 |
+| `errorType` | 種別を直接書くとき。 |
+| `message` | 短いメッセージ。改行はなくし、100 文字までに切ります。個人情報や業務データを入れないでください。 |
+
+### opts
+
+| 名前 | 既定 | 内容 |
+|------|------|------|
+| `spreadsheetId` | — | 書くスプレッドシートの ID。 |
+| `spreadsheet` | — | スプレッドシートのオブジェクト（ID の代わり）。 |
+| （どちらもない） | 開いているスプレッドシート | スプレッドシートに付いたスクリプトのとき。なければエラー。 |
+| `sheetName` | `実行記録` | シート名。 |
+| `maxRows` | `5000` | 残す行数（見出しを除く）。越えたら古い行から消す。 |
+
+### 決まりごと
+
+- `=`・`+`・`-`・`@` で始まる文字は、式として読まれないよう先頭に `'` をつけます。
+- 今あるシートの見出しは書き直しません（列の並びは上の表のまま使ってください）。
+- 書き込みに失敗したらエラーを投げます。
+
+## WitGas.notify — エラー通知
+
+失敗したら、`MailApp` で指定アドレスに知らせます。同じ処理・同じエラー種別は 1 時間に 1 通までです。
+
+```js
+WitGas.notify.failure(
+  { name: '請求書PDF', error: e, count: 3 },
+  { to: 'ops@example.com', linkUrl: '（実行記録のシートの URL）' }
+);
+// → { sent: true }  または  { sent: false, reason: 'throttled' }
+```
+
+届くメール：
+
+```
+件名：[WitGas] 失敗: 請求書PDF (TypeError)
+
+処理が失敗しました。
+
+処理名：請求書PDF
+エラー種別：TypeError
+時刻：2026-01-05 10:00:01（Asia/Tokyo）
+件数：3
+実行記録：https://docs.google.com/spreadsheets/d/...
+
+同じ処理・同じエラー種別のお知らせは 1 時間に 1 通までです。
+回数や詳しい時刻は実行記録と、Apps Script の「実行数」画面で確認してください。
+```
+
+### info と opts
+
+| 名前 | 既定 | 内容 |
+|------|------|------|
+| `info.name` | （必須） | 処理名。 |
+| `info.error` / `info.errorType` | 種別 `Error` | 種別だけを使います。**エラーのメッセージはメールに書きません。** |
+| `info.at` | 今 | 起きた時刻。 |
+| `info.count` | — | 件数。 |
+| `opts.to` | （必須） | 送り先。カンマ区切りの文字列か配列。 |
+| `opts.throttleMs` | `3600000`（1 時間） | 同じ通知を抑える時間。1 分〜6 時間。 |
+| `opts.subjectPrefix` | `[WitGas]` | 件名の頭。先方の名前などに変えられます。 |
+| `opts.linkUrl` | — | 本文に載せる URL（`https://` で始まるもの）。 |
+| `opts.timeZone` | スクリプトのタイムゾーン | 時刻の表示に使う。 |
+
+### 決まりごと
+
+- 抑えるための目印は `CacheService` のスクリプトのキャッシュに置きます（キーは `WitGas.notify:` ＋処理名と種別から作った値）。
+- 送れたときだけ目印を置きます。送れなかったらエラーを投げ、次の失敗でもう一度送ります。
+- `CacheService` は期限の前に消えることがあります。そのときは 1 時間以内でももう 1 通届きます。
+  また、同時に 2 つの実行が失敗すると、2 通届くことがあります。「多くても 1 通」ではなく「ふつうは 1 通」と考えてください。
+- 処理名と種別の改行はなくします（件名が壊れないように）。
+
 ## 権限（oauthScopes）
 
 `appsscript.json` の `oauthScopes` を明示し、必要なものだけを並べます。部品を追加するたびに、ここに理由を書きます。
@@ -191,7 +290,12 @@ function makeInvoices() {   // 毎日のトリガーからも、続きのトリ�
 | （なし） | `WitGas.lock` | `LockService` と `console` だけを使う。追加の権限を求めない想定（実機確認は L1） |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | 続きを動かすトリガーを作る・消す（`ScriptApp`）。カーソルの保存（`PropertiesService`）は追加の権限を求めない想定（実機確認は R8） |
 
-`lock` だけを使う場合は、`script.scriptapp` を外してかまいません。
+| `https://www.googleapis.com/auth/spreadsheets` | `WitGas.runlog` | 指定した ID のスプレッドシートを開いて書く（`SpreadsheetApp.openById`） |
+| `https://www.googleapis.com/auth/script.send_mail` | `WitGas.notify` | 失敗を知らせるメールを送る（`MailApp`）。`CacheService`・`Utilities`・`Session` は追加の権限を求めない想定（実機確認は N1） |
+
+使わない部品の権限は外してかまいません。
+`runlog` を、スクリプトが付いたスプレッドシートにだけ書く（`spreadsheetId` を渡さない）場合は、
+`spreadsheets` の代わりに `https://www.googleapis.com/auth/spreadsheets.currentonly` で足りる見込みです（実機確認は W7）。
 
 ## 止め方
 
@@ -200,7 +304,9 @@ function makeInvoices() {   // 毎日のトリガーからも、続きのトリ�
   手で止める場合は、「トリガー」画面から続きのトリガー（関数名が `handler`、1 回だけ動くもの）を消し、
   「プロジェクトの設定 → スクリプト プロパティ」から `WitGas.resume:<key>` を消します。
   トリガーだけを消すと、次に `run` が呼ばれたときにカーソルの続きから動きます。
-- どちらの場合も、毎日など決まった時刻に呼んでいるトリガーは利用者が作ったものです。完全に止めるならそれも消してください。
+- `WitGas.runlog` と `WitGas.notify` は、トリガーもスクリプトのプロパティも作りません。
+  記録をやめるには呼んでいる行を消し、通知の宛先を変えるには `opts.to` を変えます。「実行記録」シートは消しても次に書くときに作り直されます。
+- どの場合も、毎日など決まった時刻に呼んでいるトリガーは利用者が作ったものです。完全に止めるならそれも消してください。
 
 ## 開発
 
