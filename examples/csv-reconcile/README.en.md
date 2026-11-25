@@ -115,6 +115,8 @@ Other failures also show as failed in Apps Script's Executions page, where the e
 A newly created spreadsheet may store Pacific time even though its settings show Tokyo (see `WitGas.runlog` in the top README).
 This example aligns the spreadsheet's time zone to the script's (Asia/Tokyo) only when it first creates the run-log sheet (`matchTimeZone: true`).
 
+In the on-GAS check (2026-11-26), attaching the script via Extensions → Apps Script had already changed the time zone to `Asia/Tokyo`, so `matchTimeZone` did not need to act; it stays on as a safeguard.
+
 ## How to stop
 
 - No triggers and no script properties are created; it runs only from the menu.

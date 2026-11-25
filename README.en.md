@@ -324,6 +324,7 @@ Results are written as 成功 (success), 失敗 (failure), スキップ (skipped
 - An existing sheet's header is not rewritten (keep the column order above).
 - Column widths are set when the sheet is created (150 px for start/end so the timestamps are not cut off).
 - **Mind the log spreadsheet's time zone.** A newly created spreadsheet stores `America/Los_Angeles` until a sheet is edited once, while File → Settings shows Tokyo, so you cannot notice it on screen (on-GAS check W8, 2026-11-26: renaming the file did not change it; editing a sheet, such as renaming it, changed it to `Asia/Tokyo`).
+  Attaching a script via Extensions → Apps Script also changed it to `Asia/Tokyo` (check E8), so writing to the script's own spreadsheet showed no shift in our checks. The shift happens when **the log is a separate spreadsheet written by `spreadsheetId` that has never been edited since it was created**.
   Writing in that state shows times 17 hours off, and fixing the time zone afterwards does not fix rows already written.
   - After creating a log spreadsheet, edit a sheet once (e.g. rename it) before writing.
   - Or set `matchTimeZone: true` to align it when the run-log sheet is created.
