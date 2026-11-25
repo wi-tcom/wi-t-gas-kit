@@ -75,6 +75,11 @@ function createSheet(name) {
       };
       return range;
     },
+    clearContents() {
+      meta.clearCalls = (meta.clearCalls || 0) + 1;
+      rows.length = 0;
+      return sheet;
+    },
     deleteRows(start, howMany) {
       meta.deleteCalls.push([start, howMany]);
       rows.splice(start - 1, howMany);
