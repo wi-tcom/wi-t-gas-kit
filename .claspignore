@@ -1,0 +1,4 @@
+# GAS に送るのは appsscript.json と src/ のソースだけ
+**/**
+!appsscript.json
+!src/**/*.js
