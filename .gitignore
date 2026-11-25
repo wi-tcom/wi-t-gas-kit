@@ -1,0 +1,4 @@
+node_modules/
+# スクリプトIDや認証情報は先方・環境ごとなのでコミットしない
+.clasp.json
+.clasprc.json
