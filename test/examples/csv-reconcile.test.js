@@ -90,16 +90,42 @@ test('画面がないところ（エディタ・トリガー）から動かし�
   assert.ok(env.logs.some((l) => l.message.startsWith('[CSV照合] 「会計」と「CSV貼り付け」')));
 });
 
-test('CSV の見出しが違う（列がない）ときは失敗として記録し、メールで知らせてからエラーを投げる', () => {
+test('CSV の見出しに列がないときは、日本語で知らせ、失敗として記録してメールで知らせる（投げない）', () => {
   const { env, ss, values, run } = setup();
   env.context.setupCsvReconcileSample();
-  const sheet = ss.getSheetByName('CSV貼り付け');
-  sheet.getRange(1, 3, 1, 1).setValues([['振込額']]);
-  assert.throws(run, /column "入金額" not found/);
+  ss.getSheetByName('CSV貼り付け').getRange(1, 3, 1, 1).setValues([['振込額']]);
+  const res = run();
+  assert.deepEqual({ ...res }, { status: 'failure', errorType: 'CsvFormatError' });
+  assert.deepEqual(env.SpreadsheetApp.ui.alerts, [
+    '「CSV貼り付け」の見出し（1 行目）に「入金額」がありません。CSV の形式（1 行目の列名）を確かめてください。'
+  ]);
   const log = values('実行記録');
-  assert.deepEqual(Array.from(log[1].slice(2, 6)), ['CSV照合', '失敗', '', 'Error']);
+  assert.deepEqual(Array.from(log[1].slice(2, 6)), ['CSV照合', '失敗', '', 'CsvFormatError']);
   assert.equal(env.MailApp.sent.length, 1);
-  assert.equal(env.MailApp.sent[0].to, 'ops@example.com');
+  assert.equal(env.MailApp.sent[0].subject, '[WitGas] 失敗: CSV照合 (CsvFormatError)');
+  assert.equal(values('照合結果'), null);
+});
+
+test('会計側の見出しが足りないときも、どちらのシートの何が足りないかを知らせる', () => {
+  const { env, ss, run } = setup();
+  env.context.setupCsvReconcileSample();
+  ss.getSheetByName('会計').getRange(1, 1, 1, 1).setValues([['番号']]);
+  ss.getSheetByName('CSV貼り付け').getRange(1, 4, 1, 1).setValues([['日付']]);
+  run();
+  assert.deepEqual(env.SpreadsheetApp.ui.alerts[0].split('\n'), [
+    '「会計」の見出し（1 行目）に「請求番号」がありません。',
+    '「CSV貼り付け」の見出し（1 行目）に「入金日」がありません。CSV の形式（1 行目の列名）を確かめてください。'
+  ]);
+});
+
+test('見出しの間違い以外の失敗は投げ直す（「実行数」画面に失敗として残す）', () => {
+  const { env, ss, values, run } = setup();
+  env.context.setupCsvReconcileSample();
+  ss.insertSheet('照合結果').appendRow(['先方のメモ']); // 照合結果のシート名がほかの用途で使われている
+  assert.throws(run, /not a reconcile report/);
+  assert.equal(values('実行記録')[1][3], '失敗');
+  assert.equal(env.MailApp.sent.length, 1);
+  assert.deepEqual(env.SpreadsheetApp.ui.alerts, []);
 });
 
 test('ほかの照合が動いているときは動かさず、画面で知らせて「スキップ」を残す', () => {
@@ -133,7 +159,7 @@ test('見本のデータの CSV 側は文字のまま入れる（書式を @ に
 test('グローバルに増やす名前は WitGas と見本の関数だけ', () => {
   const { env } = setup();
   assert.deepEqual(env.addedGlobals().sort(), [
-    'CSV_RECONCILE', 'WitGas', 'csvReconcileAlert_', 'csvReconcileReadTable_',
+    'CSV_RECONCILE', 'WitGas', 'csvReconcileAlert_', 'csvReconcileCheckColumns_', 'csvReconcileReadTable_',
     'onOpen', 'runCsvReconcile', 'setupCsvReconcileSample'
   ]);
 });
@@ -155,4 +181,12 @@ test('npm run example:build は、GAS に送るファイルだけを dist にま
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }
+});
+
+test('実行記録を初めて作るとき、このスプレッドシートのタイムゾーンをスクリプトに合わせる（新しいファイルは太平洋時間のことがある）', () => {
+  const env = createGasEnv({ files: PARTS, extra: [EXAMPLE + '/main.js'] });
+  const ss = env.SpreadsheetApp.addSpreadsheet('BOOK', { active: true, timeZone: 'America/Los_Angeles' });
+  env.context.setupCsvReconcileSample();
+  env.context.runCsvReconcile();
+  assert.equal(ss.getSpreadsheetTimeZone(), 'Asia/Tokyo');
 });

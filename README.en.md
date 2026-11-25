@@ -316,14 +316,19 @@ Results are written as 成功 (success), 失敗 (failure), スキップ (skipped
 | (neither) | active spreadsheet | For scripts bound to a spreadsheet; error if none. |
 | `sheetName` | `実行記録` | Sheet name. |
 | `maxRows` | `5000` | Rows to keep (excluding the header). Oldest rows are deleted beyond this. |
+| `matchTimeZone` | `false` | Only when creating the run-log sheet (or when it is empty), set the log spreadsheet's time zone to the script's if they differ. If the sheet already has rows, nothing is changed and only a warning is logged. Off by default because it changes the client's file settings. |
 
 ### Rules
 
 - Text starting with `=`, `+`, `-` or `@` is prefixed with `'` so it is not read as a formula.
 - An existing sheet's header is not rewritten (keep the column order above).
 - Column widths are set when the sheet is created (150 px for start/end so the timestamps are not cut off).
-- **Set the log spreadsheet's time zone to the script's** (File → Settings). If they differ, `[WitGas.runlog] time zone differs: ...` is logged and `append` returns `timeZoneMismatch: true`.
-  In the on-GAS check (2026-11-25), times in a separate spreadsheet opened by `spreadsheetId` were shown 17 hours off (cause under investigation; step W8).
+- **Mind the log spreadsheet's time zone.** A newly created spreadsheet stores `America/Los_Angeles` until a sheet is edited once, while File → Settings shows Tokyo, so you cannot notice it on screen (on-GAS check W8, 2026-11-26: renaming the file did not change it; editing a sheet, such as renaming it, changed it to `Asia/Tokyo`).
+  Writing in that state shows times 17 hours off, and fixing the time zone afterwards does not fix rows already written.
+  - After creating a log spreadsheet, edit a sheet once (e.g. rename it) before writing.
+  - Or set `matchTimeZone: true` to align it when the run-log sheet is created.
+    **`matchTimeZone` acts only when the run-log sheet is created (or empty).** When writing to a run-log sheet that already has rows, the file's time zone is left as is even if it is still Pacific, and only the warning below is logged (those rows are already shifted; changing it would mix two time bases in one sheet). In that case, edit a sheet of the log spreadsheet once (e.g. rename it) so its time zone becomes `Asia/Tokyo`, then recreate the run-log sheet (File → Settings already shows Tokyo, so looking there does not fix it).
+  - If written with a mismatch, `[WitGas.runlog] time zone differs: ...` is logged and `timeZoneMismatch` is `true`; when aligned, `timeZoneChanged` is `true`.
 - Write failures are thrown.
 
 ## WitGas.notify — failure notification
@@ -443,6 +448,7 @@ Writes the result to a "照合結果" (reconcile result) sheet: counts per categ
 
 - The target sheet must be **empty or a previous `writeReport` output (A1 is "照合日時")**. Any other sheet is left untouched and an error is thrown.
 - A previous report is cleared before writing.
+- Column widths are set only when the sheet is new or empty (so the timestamp is not cut off); later writes keep widths the client changed.
 - Values starting with `=`, `+`, `-` or `@` are prefixed with `'` so they are not read as formulas.
 
 ### summaryText(result, labels)

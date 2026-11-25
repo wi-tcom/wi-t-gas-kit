@@ -27,7 +27,7 @@ test('シートがなければ「実行記録」を作り、見出しを太字�
   assert.deepEqual(s.values()[0], HEADER);
   assert.equal(s.getFrozenRows(), 1);
   assert.deepEqual(s._meta.fontWeights.map((f) => [f.row, f.numCols, f.w]), [[1, 7, 'bold']]);
-  assert.deepEqual({ ...res }, { row: 2, trimmed: 0, timeZoneMismatch: false });
+  assert.deepEqual({ ...res }, { row: 2, trimmed: 0, timeZoneMismatch: false, timeZoneChanged: false });
   assert.deepEqual([...env.WitGas.runlog.HEADER], HEADER);
   assert.deepEqual({ ...s._meta.columnWidths }, { 1: 150, 2: 150, 3: 160, 4: 80, 5: 60, 6: 120, 7: 300 },
     '日時が切れて見えない幅にする（実機確認 W2）');
@@ -127,7 +127,7 @@ test('上限の既定は 5,000 行：5,000 行あるところに足すと、一�
   assert.equal(values.length, 5001);
   assert.equal(values[1][2], 'old2');
   assert.equal(values[5000][2], 'new');
-  assert.deepEqual({ ...res }, { row: 5001, trimmed: 1, timeZoneMismatch: false });
+  assert.deepEqual({ ...res }, { row: 5001, trimmed: 1, timeZoneMismatch: false, timeZoneChanged: false });
   assert.deepEqual(s._meta.deleteCalls, [[2, 1]]);
 });
 
@@ -219,4 +219,53 @@ test('タイムゾーンが同じなら警告しない。タイムゾーンを�
   const res = env.WitGas.runlog.append({ name: 'x', result: 'success' }, { spreadsheet: fake });
   assert.equal(res.timeZoneMismatch, false);
   assert.equal(rows.length, 2);
+});
+
+test('matchTimeZone: true なら、実行記録のシートを新しく作るとき記録先のタイムゾーンをスクリプトに合わせてから書く（実機確認 W8）', () => {
+  const env = createGasEnv();
+  const ss = env.SpreadsheetApp.addSpreadsheet('NEW', { timeZone: 'America/Los_Angeles' });
+  const res = env.WitGas.runlog.append({ name: '日次集計', result: 'success' }, { spreadsheetId: 'NEW', matchTimeZone: true });
+  assert.equal(ss.getSpreadsheetTimeZone(), 'Asia/Tokyo');
+  assert.equal(res.timeZoneChanged, true);
+  assert.equal(res.timeZoneMismatch, false);
+  assert.ok(env.logs.some((l) => l.level === 'log' &&
+    l.message === '[WitGas.runlog] set spreadsheet time zone to Asia/Tokyo (was America/Los_Angeles) (日次集計)'));
+  assert.ok(!env.logs.some((l) => l.level === 'warn'));
+});
+
+test('matchTimeZone: true でも、実行記録にもう行があれば記録先の設定は変えず、警告だけ出す', () => {
+  const env = createGasEnv();
+  const ss = env.SpreadsheetApp.addSpreadsheet('OLD', { timeZone: 'America/Los_Angeles' });
+  const s = ss.insertSheet('実行記録');
+  s.appendRow(HEADER);
+  s.appendRow([0, 0, '前の記録', '成功', '', '', '']);
+  const res = env.WitGas.runlog.append({ name: 'x', result: 'success' }, { spreadsheetId: 'OLD', matchTimeZone: true });
+  assert.equal(ss.getSpreadsheetTimeZone(), 'America/Los_Angeles');
+  assert.equal(res.timeZoneChanged, false);
+  assert.equal(res.timeZoneMismatch, true);
+  assert.ok(env.logs.some((l) => l.level === 'warn' && l.message.startsWith('[WitGas.runlog] time zone differs:')));
+});
+
+test('matchTimeZone の既定はオフ（先方のファイルの設定を勝手に変えない）', () => {
+  const env = createGasEnv();
+  const ss = env.SpreadsheetApp.addSpreadsheet('NEW', { timeZone: 'America/Los_Angeles' });
+  env.WitGas.runlog.append({ name: 'x', result: 'success' }, { spreadsheetId: 'NEW' });
+  assert.equal(ss.getSpreadsheetTimeZone(), 'America/Los_Angeles');
+});
+
+test('タイムゾーンを変えられなかったときは警告を出して書き続ける', () => {
+  const env = createGasEnv();
+  const ss = env.SpreadsheetApp.addSpreadsheet('NEW', { timeZone: 'America/Los_Angeles' });
+  ss.setSpreadsheetTimeZone = () => { throw new Error('denied'); };
+  const res = env.WitGas.runlog.append({ name: 'x', result: 'success' }, { spreadsheetId: 'NEW', matchTimeZone: true });
+  assert.equal(res.timeZoneMismatch, true);
+  assert.equal(res.row, 2);
+  assert.ok(env.logs.some((l) => l.level === 'warn' && l.message === '[WitGas.runlog] could not set spreadsheet time zone (Error) (x)'));
+});
+
+test('matchTimeZone は真偽値だけ（validateOptions でも確かめる）', () => {
+  const { env, opts } = setup();
+  assert.throws(() => env.WitGas.runlog.append({ name: 'x', result: 'success' }, { ...opts, matchTimeZone: 'yes' }),
+    /^TypeError: WitGas\.runlog\.append: opts\.matchTimeZone must be a boolean/);
+  assert.throws(() => env.WitGas.runlog.validateOptions({ matchTimeZone: 1 }), /opts\.matchTimeZone must be a boolean/);
 });

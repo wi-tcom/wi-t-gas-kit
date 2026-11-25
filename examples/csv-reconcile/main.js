@@ -52,17 +52,31 @@ function runCsvReconcile() {
     return null;
   }
 
-  var res = WitGas.guard(cfg.name, function (ctx) {
-    var r = WitGas.reconcile.compare(left, right, cfg.compare);
-    WitGas.reconcile.writeReport(r, { spreadsheet: ss, sheetName: cfg.reportSheet, labels: cfg.labels });
-    var text = WitGas.reconcile.summaryText(r, cfg.labels);
-    ctx.setCount(r.summary.leftRows);
-    ctx.setMessage(text);
-    return text;
-  }, {
-    log: { spreadsheet: ss, sheetName: cfg.logSheet },
-    notify: { to: cfg.notifyTo }
-  });
+  var res;
+  try {
+    res = WitGas.guard(cfg.name, function (ctx) {
+      csvReconcileCheckColumns_(left, right, cfg);
+      var r = WitGas.reconcile.compare(left, right, cfg.compare);
+      WitGas.reconcile.writeReport(r, { spreadsheet: ss, sheetName: cfg.reportSheet, labels: cfg.labels });
+      var text = WitGas.reconcile.summaryText(r, cfg.labels);
+      ctx.setCount(r.summary.leftRows);
+      ctx.setMessage(text);
+      return text;
+    }, {
+      // 新しいスプレッドシートは、設定画面に「東京」と出ていても太平洋時間で保存されていることがある。
+      // 実行記録を初めて作るときだけ、このスプレッドシートのタイムゾーンをスクリプトに合わせる（実機確認 W8）
+      log: { spreadsheet: ss, sheetName: cfg.logSheet, matchTimeZone: true },
+      notify: { to: cfg.notifyTo }
+    });
+  } catch (e) {
+    // 実行記録と通知は guard が済ませている。見出しの間違いは、担当者に日本語で知らせて終わる。
+    // それ以外の失敗は投げ直す（「実行数」画面に失敗として残り、詳しいエラーをそこで読める）。
+    if (e && e.name === 'CsvFormatError') {
+      csvReconcileAlert_(e.message);
+      return { status: 'failure', errorType: e.name };
+    }
+    throw e;
+  }
 
   if (res.status === 'success') {
     ss.toast(res.value, cfg.name, 10);
@@ -116,6 +130,37 @@ function setupCsvReconcileSample() {
 
   ss.toast('見本のデータを入れました。メニュー「照合 → 照合する」で試せます。', cfg.name, 10);
   return true;
+}
+
+/**
+ * 照合に使う列が、両方の見出しにあるかを確かめる。なければ CsvFormatError を投げる。
+ * メッセージには列名だけを書く（データの値は書かない）。
+ */
+function csvReconcileCheckColumns_(left, right, cfg) {
+  var c = cfg.compare;
+  var keys = typeof c.key === 'string' ? [c.key] : c.key;
+  var leftNeeded = keys.concat(c.columns || []);
+  var map = c.columnMap || {};
+  var rightNeeded = leftNeeded.map(function (name) { return map.hasOwnProperty(name) ? map[name] : name; });
+  var missing = function (table, names) {
+    var header = table[0].map(function (h) { return h === null || h === undefined ? '' : String(h).trim(); });
+    return names.filter(function (n) { return header.indexOf(n) < 0; });
+  };
+  var lines = [];
+  var ml = missing(left, leftNeeded);
+  var mr = missing(right, rightNeeded);
+  if (ml.length > 0) {
+    lines.push('「' + cfg.leftSheet + '」の見出し（1 行目）に「' + ml.join('」「') + '」がありません。');
+  }
+  if (mr.length > 0) {
+    lines.push('「' + cfg.rightSheet + '」の見出し（1 行目）に「' + mr.join('」「') + '」がありません。' +
+      'CSV の形式（1 行目の列名）を確かめてください。');
+  }
+  if (lines.length > 0) {
+    var err = new Error(lines.join('\n'));
+    err.name = 'CsvFormatError';
+    throw err;
+  }
 }
 
 /** シートの表を読む。シートがないか、見出しだけもないときは null。 */

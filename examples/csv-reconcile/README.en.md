@@ -100,6 +100,21 @@ Whether `spreadsheets.currentonly` suffices has not been checked on GAS yet (`do
 
 Move the menu code from this example's `onOpen` into your existing `onOpen`; two `onOpen` functions overwrite each other.
 
+## On failure
+
+| What happened | Screen | Run log | Mail |
+|---------------|--------|---------|------|
+| "会計" or "CSV貼り付け" is empty | A message asking to fill both sheets | not logged | not sent |
+| A column used for matching is missing from a header (wrong CSV format) | Which sheet lacks which column (in Japanese) | failure (`CsvFormatError`) | sent |
+| Any other failure | Apps Script's error display | failure (error type) | sent |
+
+Other failures also show as failed in Apps Script's Executions page, where the error details can be read.
+
+## Run-log time zone
+
+A newly created spreadsheet may store Pacific time even though its settings show Tokyo (see `WitGas.runlog` in the top README).
+This example aligns the spreadsheet's time zone to the script's (Asia/Tokyo) only when it first creates the run-log sheet (`matchTimeZone: true`).
+
 ## How to stop
 
 - No triggers and no script properties are created; it runs only from the menu.

@@ -142,6 +142,12 @@ function checkRunlog_timeZone() {
   console.log('script: ' + Session.getScriptTimeZone());
 }
 
+function checkRunlog_matchTz() {
+  // W9：新しいスプレッドシートに、タイムゾーンを合わせてから書く
+  var res = WitGas.runlog.append({ name: '確認_tz', result: 'success' }, { spreadsheetId: LOG_ID, matchTimeZone: true });
+  console.log(JSON.stringify(res));
+}
+
 function checkRunlog_active() {
   // スクリプトが付いたスプレッドシート（確認用）に書く
   WitGas.runlog.append({ name: '確認_開いている', result: 'success' });
@@ -279,7 +285,8 @@ function checkReconcile_large() {
 | W5 | W3 を 5,000 行の上限で試す（任意）：`maxRows` を外し、5,001 回以上書く関数を `resume` で区切って動かす | 見出しと 5,000 行のまま、古い行から消える。1 回の追記にかかる時間を「実行数」から記録する |
 | W6 | `checkRunlog_active` を実行 | 確認用のスプレッドシート（スクリプトが付いたもの）に「実行記録」ができる |
 | W7 | `oauthScopes` の `spreadsheets` を `spreadsheets.currentonly` に変えて W6 と W1 を実行（終わったら戻す） | W6 は動き、W1（`openById`）は権限のエラーになるかを記録する |
-| W8 | `checkRunlog_timeZone` を実行し、続けて `checkRunlog_basic` を実行 | 2 つのタイムゾーンをログで比べる。違うときは `checkRunlog_basic` のログに `[WitGas.runlog] time zone differs: ...` が出る。記録先のタイムゾーンを「ファイル → 設定」でスクリプトと同じにしたあと、時刻が日本時間で表示されるかを記録する（2026-11-25 の確認で、記録先の時刻が 17 時間ずれた件の原因調べ） |
+| W8 | `checkRunlog_timeZone` を実行し、続けて `checkRunlog_basic` を実行 | 2 つのタイムゾーンをログで比べる。違うときは `checkRunlog_basic` のログに `[WitGas.runlog] time zone differs: ...` が出る（2026-11-26 に原因が分かった：新しく作ったスプレッドシートは、一度シートを編集するまで `America/Los_Angeles` で保存されている。設定画面は「東京」と出る） |
+| W9 | 新しいスプレッドシートを作り（何も編集しない）、その ID を `LOG_ID` にして `checkRunlog_matchTz` を実行 | ログに `[WitGas.runlog] set spreadsheet time zone to Asia/Tokyo (was America/Los_Angeles) ...`、返り値の `timeZoneChanged` が `true`。「実行記録」の時刻が日本時間で表示される |
 
 ### notify
 
@@ -310,6 +317,7 @@ function checkReconcile_large() {
 | C3 | `checkReconcile_refuse` を実行 | `not a reconcile report` のエラーになり、「会計」シートは消えていない |
 | C4 | `checkReconcile_large` を実行 | 6 分以内に終わる。ログの時間（compare と writeReport）を記録する。README に時間を書くのは、この記録のあとにする |
 | C5 | C1 の `width: true` を外して実行 | ログが `一致 1 / 不一致 1 / 会計だけ 2 / 銀行だけ 2 / キー重複 0 / キーなし 0` になる（`ＡＢ１` と `AB1` が別のキーになる。`String.prototype.normalize` が GAS で動くことの確認） |
+| C6 | 「照合結果」シートを消してから C1 を実行 | 照合日時（B1）が切れずに表示される。列幅を手で変えてからもう一度 C1 を実行すると、その幅のまま |
 
 ### 見本：CSV照合
 
@@ -323,7 +331,8 @@ function checkReconcile_large() {
 | E4 | もう一度「見本のデータを入れる」 | 「「会計」「CSV貼り付け」にデータがあるため…」の知らせが出て、データは変わらない |
 | E5 | 「CSV貼り付け」の中身をすべて消して「照合する」 | 「…見出しのある表を入れてから実行してください。」の知らせ。「実行記録」は増えず、メールも来ない |
 | E6 | 見本の CSV（下）を `.csv` で保存し、README の「本番の CSV を取り込む」の手順で取り込んで「照合する」 | 「テキストを数値、日付、数式に変換する」の選択肢があり、オフにすると `110,000` が文字のまま入る。結果は E2 と同じ |
-| E7 | 「CSV貼り付け」の C1 を `振込額` に変えて「照合する」 | エラーの表示（`column "入金額" not found`）。「実行記録」に「失敗／Error」、`notifyTo` にメールが 1 通 |
+| E7 | 「CSV貼り付け」の C1 を `振込額` に変えて「照合する」 | 「「CSV貼り付け」の見出し（1 行目）に「入金額」がありません。CSV の形式（1 行目の列名）を確かめてください。」の知らせ（英語のエラーは出ない）。「実行記録」に「失敗／CsvFormatError」、`notifyTo` にメールが 1 通 |
+| E8 | 新しいスプレッドシートに見本を入れ、何も編集しないまま「照合 → 照合する」の前に、スクリプトで `getSpreadsheetTimeZone()` を見る。続けて「見本のデータを入れる」→「照合する」 | 最初は `America/Los_Angeles` のことがある。照合したあとは `Asia/Tokyo` になり、「実行記録」の時刻が日本時間 |
 
 E6 で使う CSV：
 
@@ -380,9 +389,29 @@ INV-006,ﾌﾒｲ,"10,000",2026/1/9
 | G5 | 合格 | 「続きあり／4」「続きあり／4」「成功／2」。3 回は 242.8 秒・248.5 秒・106.7 秒。トリガーもプロパティも残らない |
 | G6 | 合格 | すぐに `opts.to has an invalid address (#1)`、実行記録・メールなし |
 
+### 2026-11-26（対象：PR #3 のブランチ、`npm test` 134 件）
+
+- 確認した人：オーナー（操作は Claude が代行し、権限の承認はオーナーが行った）。
+- 環境：第1段は前回と同じ確認用のプロジェクト（`src/` の 6 ファイルと確認用の関数を 1 つのファイルにまとめた）。見本は、新しいスプレッドシートに `dist/csv-reconcile` を 1 つのファイルにまとめて貼り、`notifyTo` だけ変えた。
+- 手順との違い：関数を選んで実行するのが不安定だったため、決まった関数を呼ぶだけの関数を足して実行した（部品の動きには関係しない）。
+
+| # | 結果 | メモ |
+|---|------|------|
+| L2 | 合格 | 内側が `{"skipped":false,"value":"inner","nested":true}`。「内側が終わった」の約 25 秒後に別のタブで `checkLock_runs` → 待たずに `skipped`。内側が終わっても外側のロックは外れていない |
+| W2 | 合格 | 開始・終了が `2026-11-26 07:08:46` のように切れずに表示される |
+| W8 | 原因が分かった | 新しく作ったスプレッドシートは、作った直後 `America/Los_Angeles` で保存されている（ロケールは `ja_JP`、設定画面は「(GMT+09:00) 東京」と表示）。表題を変えても変わらず、シート名を変えると `Asia/Tokyo` に変わった。前回の記録先でも同じ順で切り替わった。記録先を `America/Los_Angeles` にして書くと、警告と `timeZoneMismatch: true` が出ることも確かめた → `matchTimeZone` を足し、README に書いた |
+| E1 | 合格 | 求められた権限に問題はなかった。CSV 側の `110,000` は文字のまま |
+| E2 | 合格 | `一致 2 / 不一致 2 / 会計だけ 1 / 銀行だけ 1 / キー重複 0 / キーなし 0`。明細は INV-002（入金日）・INV-004（金額 / 入金額）・INV-003・INV-006。「実行記録」に「CSV照合／成功／5」、時刻は日本時間 |
+| E3 | 合格 | 「照合結果」は同じ 14 行で書き直され、「実行記録」が 1 行増えた |
+| E4 | 合格 | |
+| E5 | 合格 | |
+| E6 | 未確認 | ファイルの取り込み画面は、代行の方法では操作できなかった。オーナーが手で確かめる |
+| E7 | 合格（メールはオーナー確認待ち）→ **直した** | 担当者に英語のエラー（`column "入金額" not found`）がそのまま見えた → 見出しに列がないときは日本語で知らせるようにした（記録と通知は今までどおり）。直したあとの E7 は未確認 |
+| — | 気づいたこと → **直した** | 「照合結果」の A・B 列が狭く、照合日時が切れて見えた → シートを新しく作るときに列幅を決めるようにした（C6） |
+
 ### 次に確かめること
 
-- 未確認の項目：L1・L7・L8・R6・R7・R8・W5・W7・N4。権限の部分は、部品ごとに別のプロジェクトに分けて確かめる。
-- 直したところ：L2（入れ子）・W2（列幅）・W8（タイムゾーン）。
+- 未確認の項目：L1・L7・L8・R6・R7・R8・W5・W7・N4・E6。権限の部分は、部品ごとに別のプロジェクトに分けて確かめる。
+- 直したところ：W9（`matchTimeZone`）・C6（照合結果の列幅）・E7（日本語の知らせ）・E8（見本のタイムゾーン）。
 
 © 2026 株式会社wi-t.com

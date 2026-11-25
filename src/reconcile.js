@@ -16,6 +16,8 @@ WitGas.reconcile = (function () {
   var REPORT_MARKER = '照合日時';
   var REPORT_WIDTH = 7;
   var DATE_FORMAT = 'yyyy-mm-dd hh:mm:ss';
+  // シートを新しく作るときの列幅（ピクセル）：区分・キー（照合日時）・左の行・右の行・列・左の値・右の値
+  var COLUMN_WIDTHS = [100, 150, 70, 70, 140, 150, 150];
   var CATEGORY_KEYS = ['matched', 'mismatched', 'leftOnly', 'rightOnly', 'duplicates', 'blankKey'];
 
   /**
@@ -129,9 +131,10 @@ WitGas.reconcile = (function () {
 
     var ss = openSpreadsheet_(opts);
     var sheet = ss.getSheetByName(sheetName);
+    var fresh = !sheet || sheet.getLastRow() === 0;
     if (!sheet) {
       sheet = ss.insertSheet(sheetName);
-    } else if (sheet.getLastRow() > 0) {
+    } else if (!fresh) {
       var a1 = sheet.getRange(1, 1, 1, 1).getValues()[0][0];
       if (a1 !== REPORT_MARKER) {
         throw new Error('WitGas.reconcile.writeReport: sheet "' + sheetName + '" is not a reconcile report (refusing to overwrite)');
@@ -140,6 +143,10 @@ WitGas.reconcile = (function () {
     }
     sheet.getRange(1, 1, rows.length, REPORT_WIDTH).setValues(rows);
     sheet.getRange(1, 2, 1, 1).setNumberFormat(DATE_FORMAT);
+    if (fresh) {
+      // 照合日時が切れずに見える幅にする（実機確認 2026-11-26）。2 回目からは先方が変えた幅を残す
+      for (var c = 0; c < COLUMN_WIDTHS.length; c++) sheet.setColumnWidth(c + 1, COLUMN_WIDTHS[c]);
+    }
     return { sheetName: sheetName, detailRows: rows.length - report.headerRows };
   }
 
