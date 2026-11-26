@@ -501,4 +501,8 @@ npm test
 - `npm run example:build -- <name>` gathers an example into a pushable folder (`dist/<name>/`).
 - On-GAS verification steps and results: [docs/manual-check.md](docs/manual-check.md) (Japanese).
 
+## License
+
+MIT License (see [LICENSE](LICENSE)).
+
 © 2026 wi-t.com Inc.

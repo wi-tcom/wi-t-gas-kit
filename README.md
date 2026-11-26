@@ -519,4 +519,8 @@ npm test
 - `npm run example:build -- <名前>` で、見本を GAS に送れる形（`dist/<名前>/`）にまとめます。
 - 実機での確認手順と結果は [docs/manual-check.md](docs/manual-check.md) にあります。
 
+## ライセンス
+
+MIT ライセンスです（[LICENSE](LICENSE)）。
+
 © 2026 株式会社wi-t.com
