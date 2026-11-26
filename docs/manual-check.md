@@ -7,7 +7,7 @@ Node のテストは GAS のサービスを偽物に差し替えて動かして�
 ## 準備
 
 1. 確認用の新しいスプレッドシートを作り、「拡張機能 → Apps Script」を開く。
-2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`・`reconcile.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
+2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`・`reconcile.js`・`handover.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
 3. 「プロジェクトの設定 → 『appsscript.json』マニフェスト ファイルをエディタで表示する」をオンにし、
    `appsscript.json` を本リポジトリのものに置き換える。
 4. 次の確認用の関数を別ファイル `check.gs` に貼る。
@@ -246,6 +246,36 @@ function checkReconcile_large() {
 }
 ```
 
+## 確認用の関数（handover）
+
+`checkHandover.gs` に貼ります。確認用のスプレッドシート（スクリプトが付いたもの）に書きます。
+
+```js
+function checkHandover() {
+  PropertiesService.getScriptProperties().setProperty('確認_秘密', 'ここは書かれない');
+  var res = WitGas.handover.write({
+    scopes: [
+      { scope: 'https://www.googleapis.com/auth/script.scriptapp', reason: '確認：トリガー' },
+      { scope: 'https://www.googleapis.com/auth/spreadsheets', reason: '確認：書き込み' },
+      { scope: 'https://www.googleapis.com/auth/script.send_mail', reason: '確認：メール' }
+    ],
+    settings: [{ name: '確認_公開', value: 'ok' }, { name: '確認_伏せる', value: 'ここも書かれない', secret: true }],
+    stopSteps: ['確認の手順 1', '確認の手順 2']
+  });
+  console.log(JSON.stringify(res));
+}
+
+function checkHandover_authInfo() {
+  // H2：承認済みの権限を GAS が返すか
+  var info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+  console.log(typeof info.getAuthorizedScopes === 'function' ? JSON.stringify(info.getAuthorizedScopes()) : 'getAuthorizedScopes なし');
+}
+
+function checkHandover_refuse() {
+  WitGas.handover.write({ sheetName: '会計' });
+}
+```
+
 ## 確認する項目
 
 ### lock
@@ -344,6 +374,17 @@ INV-004,ﾐﾎﾝｹﾝｾﾂ,"200,000",2026/1/8
 INV-005,ﾚｲｼﾞﾃﾞﾝｷ,"88,000",2026/1/9
 INV-006,ﾌﾒｲ,"10,000",2026/1/9
 ```
+
+### handover
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| H1 | トリガーの画面で、何か 1 つ時間主導型のトリガーを作ってから `checkHandover` を実行 | 「引き継ぎ書」シートができる。頭にスクリプト ID とタイムゾーン、「トリガー」にそのトリガー（関数・時間主導型・CLOCK・ID）、「止め方」に 1・2 の番号つきの手順 |
+| H2 | `checkHandover_authInfo` を実行し、H1 の「権限」を見る | ログに承認済みの権限の一覧が出るか（`getAuthorizedScopes なし` なら、「承認済み」はすべて「分からない」になる）。一覧が出るときは、承認した 3 つが「はい」になる。追加の権限を求められないこと |
+| H3 | H1 の「スクリプトのプロパティ」と「設定値」を見る | `確認_秘密` のキーはあり、「ここは書かれない」「ここも書かれない」はシートのどこにもない（設定値は「（伏せる）」） |
+| H4 | `checkResume` の 1 回目のあと（続きが動く前）に `checkHandover` を実行 | 「トリガー」の続きのトリガーに「WitGas.resume の続き（確認）」、「スクリプトのプロパティ」の `WitGas.resume:確認` に cursor と runs が出る |
+| H5 | `checkHandover_refuse` を実行 | `not a handover sheet` のエラーになり、「会計」シートは消えていない |
+| H6 | `oauthScopes` から `script.scriptapp` を外して `checkHandover` を実行（終わったら戻す） | 止まらずに書き終わり、「トリガー」は「（読めなかった）」、「読めなかったもの」にエラー種別が出る |
 
 ## 結果の記録
 

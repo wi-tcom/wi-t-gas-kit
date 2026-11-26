@@ -16,6 +16,7 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 | `WitGas.resume` | 6 分の上限の前に区切って続きを実行 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.guard` | 上の部品を 1 行で包む入り口 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
+| `WitGas.handover` | 引き継ぎ書をシートに書く | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.reconcile` | 2 つの表をキーで突き合わせる | 実装済み（実機確認：一部済み。見本「CSV照合」と C6 で確認、C1〜C5 は未。[結果](docs/manual-check.md#結果の記録)） |
 
 ### 見本
@@ -478,12 +479,77 @@ function reconcileInvoices() {
 照合結果のシートには、照合のためにキーと値（業務データ）を書きます。先方のスプレッドシートの中に置き、共有の範囲に気をつけてください。
 実行記録と通知には `summaryText` の件数だけを書きます。エラーのメッセージには列名だけを書き、データの値は書きません。
 
+## WitGas.handover — 引き継ぎ書
+
+引き継ぎに要ることを集めて、スプレッドシートの「引き継ぎ書」シートに書きます。
+納品のときや、担当が替わるときに作り直してください。
+
+```js
+function writeHandover() {   // スクリプトエディタから実行する
+  WitGas.handover.write({
+    scopes: [                // appsscript.json の oauthScopes と、使う理由
+      { scope: 'https://www.googleapis.com/auth/spreadsheets', reason: '実行記録と照合結果を書く' },
+      { scope: 'https://www.googleapis.com/auth/script.scriptapp', reason: '続きのトリガーを作る・消す' },
+      { scope: 'https://www.googleapis.com/auth/script.send_mail', reason: '失敗をメールで知らせる' }
+    ],
+    settings: [              // 設定値。secret: true の値は伏せる
+      { name: '通知先', value: GUARD.notify.to, note: '失敗のメールの送り先' },
+      { name: '実行記録', value: 'このスプレッドシートの「実行記録」シート' }
+    ],
+    stopSteps: [             // 止め方（順番に）
+      'トリガーの画面で dailySummary のトリガーを消す',
+      "途中で止めるなら WitGas.resume.cleanup('invoicePdf') を実行する"
+    ]
+  });
+}
+```
+
+### 書くこと
+
+| 節 | 中身 | どこから |
+|----|------|----------|
+| （頭） | 作成日時・スクリプト ID・タイムゾーン | GAS |
+| トリガー | 関数・種類（時間主導型・開いたとき など）・起動元・ID。`WitGas.resume` の続きのトリガーには印をつける | `ScriptApp.getProjectTriggers()` |
+| 権限 | 権限・理由・承認済みか | `opts.scopes`（呼び出し側が書く）と、GAS が返す承認済みの権限 |
+| スクリプトのプロパティ | キーだけ。**値は書かない**。`WitGas.resume` の途中なら進み具合（cursor・runs） | `PropertiesService` |
+| シートの構成 | シート名・行数・列数（`headers: true` なら 1 行目も） | 書き先のスプレッドシート（`opts.inspect` でほかも） |
+| 設定値 | 名前・値・説明。`secret: true` の値は伏せる | `opts.settings` |
+| 止め方 | 番号つきの手順 | `opts.stopSteps` |
+| 読めなかったもの | 権限が足りないなどで読めなかった項目と、エラー種別 | — |
+
+### opts
+
+| 名前 | 既定 | 内容 |
+|------|------|------|
+| `spreadsheetId` / `spreadsheet` | 開いているスプレッドシート | 書き先。 |
+| `sheetName` | `引き継ぎ書` | シート名。 |
+| `scopes` | — | `[{scope, reason}]`。`appsscript.json` の `oauthScopes` と同じものを、理由をつけて書く。 |
+| `settings` | — | `[{name, value, note?, secret?}]`。 |
+| `stopSteps` | — | 止め方の手順（文字の配列）。 |
+| `inspect` | 書き先 | 構成を書くスプレッドシート（オブジェクトか ID の配列）。 |
+| `headers` | `false` | 各シートの 1 行目（見出し）も書く。1 行目が見出しでないシートがあると、業務データが引き継ぎ書に載るので、既定はオフ。 |
+
+`WitGas.handover.collect(opts)` は、同じ中身をオブジェクトで返すだけで、シートには書きません。
+
+### 決まりごと
+
+- **権限は呼び出し側が書きます。** GAS は実行中に自分の `appsscript.json` を読めないためです。
+  かわりに、GAS が返す「承認済みの権限」と突き合わせ、書いた権限が承認されていなければ「いいえ」、
+  承認されているのに書かれていない権限は「（理由が書かれていない）」として出します。
+  承認済みの権限を GAS が返さないときは「分からない」と書きます。
+- **トリガーは、引き継ぎ書を作った人が作ったものだけが出ます**（`getProjectTriggers()` の決まり）。ほかの人が作ったトリガーは、その人が作ってください。
+- 時間主導型のトリガーの時刻（毎日 9 時、など）は GAS から読めないので、トリガーの画面で確かめてください。
+- 書き先のシートは、**空か、前に `write` で書いた引き継ぎ書（A1 が「引き継ぎ書」）に限ります**。ほかのシートを指定すると、消さずにエラーにします。
+- 「引き継ぎ書」シートそのものは、シートの構成に入れません。
+- シートを新しく作るときだけ列幅を決めます。`=`・`+`・`-`・`@` で始まる値は、式として読まれないよう先頭に `'` をつけます。
+
 ## 権限（oauthScopes）
 
 `appsscript.json` の `oauthScopes` を明示し、必要なものだけを並べます。部品を追加するたびに、ここに理由を書きます。
 
 | 権限 | 使う部品 | 理由 |
 |------|----------|------|
+| （追加なし） | `WitGas.handover` | トリガーの一覧に `script.scriptapp`、書き込みとほかのスプレッドシートを開くのに `spreadsheets` を使う（どちらもこの表のほかの行にあるもの）。`script.scriptapp` がなければトリガーは「読めなかった」と書く。承認済みの権限を読むのに追加の権限は要らない想定（実機確認は H2） |
 | （追加なし） | `WitGas.guard` | 中で使う部品（lock・runlog・notify）の権限だけ。`log: false` なら `spreadsheets`、`notify: false` なら `script.send_mail` は要らない |
 | （なし） | `WitGas.lock` | `LockService` と `console` だけを使う。追加の権限を求めない想定（実機確認は L1） |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | 続きを動かすトリガーを作る・消す（`ScriptApp`）。カーソルの保存（`PropertiesService`）は追加の権限を求めない想定（実機確認は R8） |
@@ -501,6 +567,7 @@ function reconcileInvoices() {
   手で止める場合は、「トリガー」画面から続きのトリガー（関数名が `handler`、1 回だけ動くもの）を消し、
   「プロジェクトの設定 → スクリプト プロパティ」から `WitGas.resume:<key>` を消します。
   トリガーだけを消すと、次に `run` が呼ばれたときにカーソルの続きから動きます。
+- `WitGas.handover` はトリガーもスクリプトのプロパティも作りません。「引き継ぎ書」シートは消してかまいません。
 - `WitGas.guard` はトリガーもスクリプトのプロパティも作りません（中で `resume` を使う場合は、上の `resume` の止め方に従ってください）。
 - `WitGas.runlog` と `WitGas.notify` は、トリガーもスクリプトのプロパティも作りません。
   記録をやめるには呼んでいる行を消し、通知の宛先を変えるには `opts.to` を変えます。「実行記録」シートは消しても次に書くときに作り直されます。
