@@ -16,7 +16,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.guard` | One-line wrapper combining the above | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
-| `WitGas.handover` | Write a handover document to a sheet | Implemented (Node tests only; not yet verified on GAS) |
+| `WitGas.handover` | Write a handover document to a sheet | Implemented (verified on GAS: H1–H6 passed; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.reconcile` | Match two tables by key | Implemented (partly verified on GAS through the CSV example and C6; C1–C5 not yet; see [results](docs/manual-check.md), Japanese) |
 
 ### Examples
@@ -213,11 +213,12 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 ### Return value
 
-`{ done, cursor, processed, runs, scheduled, elapsedMs }`
+`{ done, cursor, processed, runs, scheduled, elapsedMs, setupMs, stalled }`
 
 - `done`: `true` when everything is processed; `false` when it will continue ("continues" in the run log).
 - `cursor`: next position. `processed`: items processed in this execution. `runs`: execution count.
 - `scheduled`: `true` if a continuation trigger was created.
+- `setupMs`: time from the call to `run` until the first item. `stalled`: `true` if the run paused before the first item (see below).
 
 ### How it splits
 
@@ -226,7 +227,10 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 - It moves on to the next item only if that item would still fit in the budget even if it took as long as the longest item so far in this execution.
 - Time is counted from the call to `run`. If you do slow setup before it, lower `budgetMs` accordingly.
-- At least one item is processed per execution, so a job never keeps rescheduling without progress.
+- The first item is estimated with the longest item of the previous run. If most of the budget is already used before the first item (reading the saved progress, deleting the fired trigger), the run processes nothing and schedules the continuation (`stalled: true`, count 0).
+  After **3 such runs in a row**, it throws `ResumeStallError` instead of scheduling again, so a job never keeps rescheduling without progress. The cursor is kept; call `run` after fixing the cause.
+  This was added after a continuation run exceeded 6 minutes (392.8 s) in the on-GAS check on 2026-11-26. The cause is not known yet, so every run logs `[WitGas.resume] start: ... (setup …ms)` first and `longest step …ms` when pausing or finishing.
+- On the first run, and when a single item is longer than the budget, at least one item is processed.
   Still, split `step` if a single item could exceed the 6-minute limit.
 
 ### On failure
@@ -270,7 +274,7 @@ To continue right away, set `waitMs` on `lock.run` (the wait counts toward the 6
 Script property `WitGas.resume:<key>` holds this JSON. It contains no business data.
 
 ```json
-{"v":1,"cursor":4,"runs":1,"firstStartedAt":1767571200000,"triggerId":"1234567890"}
+{"v":1,"cursor":4,"runs":1,"firstStartedAt":1767571200000,"triggerId":"1234567890","lastStepMs":60000,"stalls":0}
 ```
 
 ### Other functions
@@ -518,6 +522,7 @@ function writeHandover() {   // run from the script editor
   They are checked against the scopes GAS reports as authorized: a listed scope that is not authorized shows "いいえ" (no);
   an authorized scope that is not listed shows "（理由が書かれていない）" (no reason given). If GAS does not report them, it shows "分からない" (unknown).
 - **Only triggers created by the person generating the document are listed** (a rule of `getProjectTriggers()`).
+- Fired one-time triggers (shown as disabled on the Triggers page) are listed as time-driven like the others, because GAS does not report whether a trigger is disabled (on-GAS check, 2026-11-26).
 - The time of time-driven triggers (e.g. daily at 9) cannot be read from GAS; check the Triggers page.
 - The target sheet must be **empty or a previous handover sheet (A1 is "引き継ぎ書")**; any other sheet is left untouched and an error is thrown.
 - The handover sheet itself is not listed in the sheet structure.
