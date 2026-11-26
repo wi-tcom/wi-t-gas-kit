@@ -158,7 +158,8 @@ test('ログには処理名・カーソル・件数・エラー種別だけを�
   setupJob(env, { total: 10, stepMs: MIN, failAt: 5 });
   env.context.job();
   assert.throws(() => env.fireNext());
-  assert.ok(env.logs.some((l) => l.message === '[WitGas.resume] paused: invoices at cursor 4 (processed 4, runs 1)'));
+  assert.ok(env.logs.some((l) => l.message === '[WitGas.resume] start: invoices at cursor 0 (runs 1, setup 0ms)'));
+  assert.ok(env.logs.some((l) => l.message === '[WitGas.resume] paused: invoices at cursor 4 (processed 4, runs 1, setup 0ms, longest step 60000ms)'));
   assert.ok(env.logs.some((l) => l.level === 'error' && l.message === '[WitGas.resume] failed: invoices at cursor 5 (Error)'));
   for (const l of env.logs) assert.ok(!l.message.includes('山田'), l.message);
 });
@@ -414,4 +415,131 @@ test('lock と組み合わせる：続きの回がほかの実行とぶつかっ
   assert.equal(r.results[r.results.length - 1].value.done, true);
   assert.deepEqual(seen, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.equal(env.ScriptApp.getProjectTriggers().length, 0);
+});
+
+// ---- 準備に時間がかかるとき（2026-11-26 の実機確認：続きの回が 6 分を越えた件） ----
+
+/** 保存した進み具合を読むときに、偽の時計を setupMs 進める（準備が遅い場面を作る） */
+function slowSetup(env, getSetupMs) {
+  const real = env.PropertiesService.getScriptProperties();
+  return {
+    getProperty(k) {
+      const v = real.getProperty(k);
+      if (v !== null) env.clock.advance(getSetupMs());
+      return v;
+    },
+    setProperty: (k, v) => real.setProperty(k, v),
+    deleteProperty: (k) => real.deleteProperty(k)
+  };
+}
+
+function slowJob(env, setup, total) {
+  const seen = [];
+  const props = slowSetup(env, () => setup.ms);
+  env.context.job = () => env.WitGas.resume.run({
+    key: 'k', total: total || 20, handler: 'job', properties: props,
+    step: (i) => { env.clock.advance(MIN); seen.push(i); }
+  });
+  return seen;
+}
+
+test('最初の項目に入るまでの時間（setup）をログと返り値に出す', () => {
+  const env = createGasEnv();
+  const setup = { ms: 0 };
+  slowJob(env, setup);
+  env.context.job();
+  setup.ms = 30000;
+  const res = env.fireNext().value;
+  assert.equal(res.setupMs, 30000);
+  assert.equal(res.stalled, false);
+  assert.ok(env.logs.some((l) => l.message === '[WitGas.resume] start: k at cursor 4 (runs 2, setup 30000ms)'));
+});
+
+test('準備で上限の大半を使っていたら、最初の項目を処理せずに続きを張る（前の回の 1 件の時間で見込む）', () => {
+  const env = createGasEnv();
+  const setup = { ms: 0 };
+  const seen = slowJob(env, setup);
+  env.context.job(); // 0〜3。1 件 1 分を覚える
+  setup.ms = 230000; // 230 秒 + 1 件 60 秒 = 290 秒 > 4.5 分
+  const res = env.fireNext().value;
+  assert.equal(res.stalled, true);
+  assert.equal(res.processed, 0);
+  assert.equal(res.scheduled, true);
+  assert.ok(res.elapsedMs <= 270000, 'elapsed ' + res.elapsedMs);
+  assert.deepEqual(seen, [0, 1, 2, 3]);
+  assert.equal(env.ScriptApp.pending().length, 1);
+  assert.ok(env.logs.some((l) => l.level === 'warn' &&
+    l.message === '[WitGas.resume] paused before the first item: k at cursor 4 (runs 2, setup 230000ms, last step 60000ms, stalls 1)'));
+
+  setup.ms = 0; // 次の回は速い → 進み、数え直す
+  const next = env.fireNext().value;
+  assert.equal(next.stalled, false);
+  assert.equal(next.processed, 4);
+  assert.equal(JSON.parse(env.PropertiesService.dump()['WitGas.resume:k']).stalls, 0);
+});
+
+test('最初の項目の前で区切る回が 3 回続いたら、続きを張らずにエラーにする（進まないままにしない）', () => {
+  const env = createGasEnv();
+  const setup = { ms: 0 };
+  slowJob(env, setup);
+  env.context.job();
+  setup.ms = 230000;
+  assert.equal(env.fireNext().value.stalled, true);
+  assert.equal(env.fireNext().value.stalled, true);
+  assert.throws(() => env.fireNext(), (e) => e.name === 'ResumeStallError' && /no progress in 3 runs/.test(e.message));
+  assert.equal(env.WitGas.resume.MAX_STALLS, 3);
+  assert.equal(env.ScriptApp.pending().length, 0, '続きは張らない');
+  assert.equal(env.ScriptApp.getProjectTriggers().length, 0, '動き終わったトリガーも消えている');
+  const saved = JSON.parse(env.PropertiesService.dump()['WitGas.resume:k']);
+  assert.equal(saved.cursor, 4, 'カーソルは残る（直したあと run すれば続きから）');
+  assert.equal(saved.stalls, 3);
+  assert.ok(env.logs.some((l) => l.level === 'error' && l.message.startsWith('[WitGas.resume] stalled: k at cursor 4 (3 runs without progress')));
+});
+
+test('1 件だけで上限を越える処理では、準備が遅くても最初の 1 件は必ず進める', () => {
+  const env = createGasEnv();
+  const seen = [];
+  const setup = { ms: 0 };
+  const props = slowSetup(env, () => setup.ms);
+  env.context.job = () => env.WitGas.resume.run({
+    key: 'k', total: 3, handler: 'job', budgetMs: 60000, properties: props,
+    step: (i) => { env.clock.advance(2 * MIN); seen.push(i); }
+  });
+  env.context.job();
+  setup.ms = 30000;
+  env.fireNext();
+  env.fireNext();
+  assert.deepEqual(seen, [0, 1, 2]);
+});
+
+test('前の形の保存（lastStepMs・stalls がない）もそのまま読める。おかしな値は読めないとして止める', () => {
+  const env = createGasEnv();
+  const props = env.PropertiesService.getScriptProperties();
+  props.setProperty('WitGas.resume:old', JSON.stringify({ v: 1, cursor: 2, runs: 1, firstStartedAt: 0, triggerId: null }));
+  const seen = [];
+  const res = env.WitGas.resume.run({ key: 'old', total: 4, handler: 'job', step: (i) => { seen.push(i); } });
+  assert.equal(res.done, true);
+  assert.deepEqual(seen, [2, 3]);
+
+  props.setProperty('WitGas.resume:bad', JSON.stringify({ v: 1, cursor: 0, runs: 1, firstStartedAt: 0, stalls: -1 }));
+  assert.throws(() => env.WitGas.resume.run({ key: 'bad', total: 1, handler: 'job', step: () => {} }), /saved state is unreadable/);
+});
+
+test('guard と組み合わせると、最初の項目の前で区切った回は「続きあり／0 件」、3 回続いたら「失敗」として知らせる', () => {
+  const env = createGasEnv();
+  const ss = env.SpreadsheetApp.addSpreadsheet('LOG');
+  const setup = { ms: 0 };
+  const props = slowSetup(env, () => setup.ms);
+  env.context.job = () => env.WitGas.guard('請求書', () => env.WitGas.resume.run({
+    key: 'k', total: 20, handler: 'job', properties: props, step: () => { env.clock.advance(MIN); }
+  }), { log: { spreadsheet: ss }, notify: { to: 'ops@example.com' }, rethrow: false });
+  env.context.job();
+  setup.ms = 230000;
+  env.fireNext();
+  env.fireNext();
+  env.fireNext();
+  const rows = ss.getSheetByName('実行記録').values().slice(1).map((r) => [r[3], r[4], r[5]]);
+  assert.deepEqual(rows, [['続きあり', 4, ''], ['続きあり', 0, ''], ['続きあり', 0, ''], ['失敗', '', 'ResumeStallError']]);
+  assert.equal(env.MailApp.sent.length, 1);
+  assert.equal(env.MailApp.sent[0].subject, '[WitGas] 失敗: 請求書 (ResumeStallError)');
 });
