@@ -16,13 +16,13 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 | `WitGas.resume` | 6 分の上限の前に区切って続きを実行 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.guard` | 上の部品を 1 行で包む入り口 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
-| `WitGas.reconcile` | 2 つの表をキーで突き合わせる | 実装済み（Node のテストのみ。実機確認は未） |
+| `WitGas.reconcile` | 2 つの表をキーで突き合わせる | 実装済み（実機確認：一部済み。見本「CSV照合」と C6 で確認、C1〜C5 は未。[結果](docs/manual-check.md#結果の記録)） |
 
 ### 見本
 
 | 見本 | 内容 | 状態 |
 |------|------|------|
-| [CSV照合](examples/csv-reconcile/README.md) | 会計シートと取り込んだ CSV を請求番号で照合し、結果をシートに出す（メニューから実行） | 実装済み（Node のテストのみ。実機確認は未） |
+| [CSV照合](examples/csv-reconcile/README.md) | 会計シートと取り込んだ CSV を請求番号で照合し、結果をシートに出す（メニューから実行） | 実装済み（実機確認：一部済み。E1〜E5・E7・E8 は合格、E6 は未。[結果](docs/manual-check.md#結果の記録)） |
 
 ## 入れ方
 

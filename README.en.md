@@ -16,13 +16,13 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.guard` | One-line wrapper combining the above | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
-| `WitGas.reconcile` | Match two tables by key | Implemented (Node tests only; not yet verified on GAS) |
+| `WitGas.reconcile` | Match two tables by key | Implemented (partly verified on GAS through the CSV example and C6; C1–C5 not yet; see [results](docs/manual-check.md), Japanese) |
 
 ### Examples
 
 | Example | Description | Status |
 |---------|-------------|--------|
-| [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (Node tests only; not yet verified on GAS) |
+| [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (partly verified on GAS: E1–E5, E7, E8 passed; E6 not yet; see [results](docs/manual-check.md), Japanese) |
 
 ## Installation
 
