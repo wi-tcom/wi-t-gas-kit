@@ -1,1 +1,1 @@
-["lock.js", "resume.js", "runlog.js", "notify.js", "guard.js", "handover.js"]
+["version.js", "lock.js", "resume.js", "runlog.js", "notify.js", "guard.js", "handover.js", "settings.js", "migrate.js"]

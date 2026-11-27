@@ -30,6 +30,8 @@ function setup(options) {
     const s = ss.getSheetByName(name);
     return s ? s.values().map((r) => Array.from(r)) : null;
   };
+  if (!o.noMigrate) env.context.migratePdfBatch();
+  env.SpreadsheetApp.ui.alerts.length = 0;
   const folder = () => env.DriveApp.folders()[0];
   const pdfs = () => (folder() ? env.DriveApp.filesIn(folder().getId()) : []);
   return { env, ss, values, folder, pdfs, run: () => env.context.runPdfBatch() };
@@ -41,7 +43,7 @@ test('開くと「帳票」メニューを足す（PDF を作る・途中でや�
   const menu = env.SpreadsheetApp.ui.menus[0];
   assert.equal(menu.title, '帳票');
   assert.deepEqual(menu.items.filter((i) => !i.separator).map((i) => i.functionName),
-    ['runPdfBatch', 'stopPdfBatch', 'setupPdfBatchSample', 'writePdfBatchHandover']);
+    ['runPdfBatch', 'stopPdfBatch', 'migratePdfBatch', 'checkPdfBatch', 'setupPdfBatchSample', 'writePdfBatchHandover']);
   for (const i of menu.items) {
     if (i.functionName) assert.equal(typeof env.context[i.functionName], 'function', i.functionName);
   }
@@ -51,6 +53,7 @@ test('見本のデータ 30 件から PDF を 30 件作り、作成記録に 30 
   const { env, ss, values, folder, pdfs, run } = setup();
   assert.equal(env.context.setupPdfBatchSample(), true);
   assert.equal(values('明細').length, 31);
+  assert.deepEqual(ss.getSheets().map((x) => x.getName()).sort(), ['作成記録', '明細', '設定'].sort());
   const res = run();
   assert.equal(res.status, 'success');
   assert.equal(pdfs().length, 30);
@@ -198,7 +201,8 @@ test('フォルダはスクリプトが作り、2 回目からは同じフォル
   const id = env.PropertiesService.dump().PDF_BATCH_FOLDER_ID;
   assert.ok(id);
   env.PropertiesService.getScriptProperties().setProperty('PDF_BATCH_FOLDER_ID', 'D-gone');
-  assert.equal(env.context.pdfBatchFolder_(env.context.PDF_BATCH).getName(), '見本 お見積書 PDF（wi-t-gas-kit）');
+  const settings = env.context.pdfBatchReadSettings_(env.SpreadsheetApp.getActiveSpreadsheet());
+  assert.equal(env.context.pdfBatchFolder_(settings).getName(), '見本 お見積書 PDF（wi-t-gas-kit）');
   assert.notEqual(env.PropertiesService.dump().PDF_BATCH_FOLDER_ID, 'D-gone');
 });
 
@@ -241,4 +245,118 @@ test('npm run example:build で、GAS に送るファイルだけを dist にま
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }
+});
+
+// ---- 版・設定・移行 ----
+
+function setSetting(ss, key, value) {
+  const sheet = ss.getSheetByName('設定');
+  const row = sheet.values().findIndex((r) => r[0] === key);
+  assert.ok(row > 0, key);
+  sheet.getRange(row + 1, 2, 1, 1).setValues([[value]]);
+}
+
+test('「設定と表を用意する」：設定シートと作成記録を作り、スキーマの版を 1 にする。何度動かしても同じ', () => {
+  const { env, ss, values } = setup({ noMigrate: true });
+  const res = env.context.migratePdfBatch();
+  assert.equal(res.status, 'success');
+  assert.equal(env.PropertiesService.dump()['WitGas.schema:pdfBatch'], '1');
+  const settings = values('設定');
+  assert.deepEqual(settings[0], ['項目', '値', '説明']);
+  assert.deepEqual(settings.slice(1).map((r) => r[0]), Array.from(env.context.PDF_BATCH_SETTINGS, (i) => i.key));
+  assert.deepEqual(values('作成記録')[0], ['見積番号', '作成日時', 'ファイル ID', 'ファイル名']);
+  assert.match(env.SpreadsheetApp.ui.alerts[0], /設定と表を用意しました（スキーマの版 0 → 1）/);
+
+  setSetting(ss, '発行元', '先方の会社名');
+  env.context.migratePdfBatch();
+  assert.match(env.SpreadsheetApp.ui.alerts[1], /もう用意されています（スキーマの版 1）/);
+  assert.equal(values('設定').find((r) => r[0] === '発行元')[1], '先方の会社名', '先方が変えた値は残る');
+});
+
+test('用意する前に「PDF を作る」と、日本語で知らせて何もしない', () => {
+  const { env, values, run } = setup({ noMigrate: true });
+  assert.equal(run(), null);
+  assert.match(env.SpreadsheetApp.ui.alerts[0], /設定と表がまだ用意されていません/);
+  assert.equal(values('実行記録'), null);
+});
+
+test('設定シートの値で、題・発行元・列名・フォルダ名を変えられる（コードは変えない）', () => {
+  const { env, ss, pdfs, folder, run } = setup();
+  setSetting(ss, '帳票の題', '納品書');
+  setSetting(ss, '発行元', '架空の会社');
+  setSetting(ss, 'PDF のフォルダ名', '納品書の置き場');
+  setSetting(ss, '列：見積番号', '伝票番号');
+  const s = ss.insertSheet('明細');
+  s.appendRow(['伝票番号', '宛先', '品名', '数量', '単価', '日付']);
+  s.appendRow(['D-1', '見本商店', 'ノート', 1, 100, '']);
+  run();
+  assert.equal(pdfs()[0].getName(), '納品書_D-1.pdf');
+  assert.equal(folder().getName(), '納品書の置き場');
+  assert.match(pdfs()[0].getBlob()._source, /<h1>納品書<\/h1>[\s\S]*架空の会社/);
+});
+
+test('設定の値がおかしいときは、日本語で知らせて何もしない（項目名だけで、値は出さない）', () => {
+  const { env, ss, values, run } = setup();
+  env.context.setupPdfBatchSample();
+  setSetting(ss, '失敗の通知先', '山田太郎');
+  assert.equal(run(), null);
+  assert.equal(env.SpreadsheetApp.ui.alerts.slice(-1)[0],
+    '「設定」シートの「失敗の通知先」の値がメールアドレスになっていません。「設定」シートを直してから、もう一度実行してください。');
+  setSetting(ss, '失敗の通知先', 'ops@example.com');
+  setSetting(ss, '1 回の上限（ミリ秒）', 999999);
+  assert.equal(run(), null);
+  assert.match(env.SpreadsheetApp.ui.alerts.slice(-1)[0], /「1 回の上限（ミリ秒）」は 1〜360000 の整数/);
+  assert.equal(values('実行記録'), null);
+});
+
+test('点検：問題がなければそう知らせ、あれば直すことを並べる（直しはしない）', () => {
+  const { env, ss } = setup();
+  env.context.setupPdfBatchSample();
+  const ok = env.context.checkPdfBatch();
+  assert.equal(ok.ok, true);
+  assert.match(env.SpreadsheetApp.ui.alerts.slice(-1)[0], /点検：問題は見つかりませんでした（帳票 PDF の一括作成（pdf-batch） 1\.0\.0、スキーマの版 1）/);
+
+  setSetting(ss, '列：単価', '値段');
+  env.PropertiesService.getScriptProperties().setProperty('WitGas.schema:pdfBatch', '0');
+  const ng = env.context.checkPdfBatch();
+  assert.equal(ng.ok, false);
+  assert.deepEqual(Array.from(ng.problems), [
+    'スキーマの版が 0 です（この版のコードは 1）。「設定と表を用意する」を実行してください。',
+    '「明細」の見出し（1 行目）に「値段」がありません。'
+  ]);
+});
+
+test('版上げの練習：前の版（スキーマ 1）のデータに、段を足した新しい版を入れると、足した段だけが動く', () => {
+  const { env, ss, values, run } = setup();
+  env.context.setupPdfBatchSample();
+  run();
+  // 新しい版で「作成記録に『送信日時』の列を足す」段が増えたとする
+  const steps = Array.from(env.context.PDF_BATCH_STEPS).concat([{
+    version: 2,
+    name: '作成記録に送信日時の列を足す',
+    run: () => {
+      const rec = ss.getSheetByName('作成記録');
+      if (rec.values()[0][4] !== '送信日時') rec.getRange(1, 5, 1, 1).setValues([['送信日時']]);
+    }
+  }]);
+  env.context.PDF_BATCH_STEPS = steps;
+  const before = values('作成記録').length;
+  env.context.migratePdfBatch();
+  env.context.migratePdfBatch(); // 何度動かしても同じ
+  assert.equal(env.PropertiesService.dump()['WitGas.schema:pdfBatch'], '2');
+  assert.equal(values('作成記録')[0][4], '送信日時');
+  assert.equal(values('作成記録').length, before, '作成記録の中身は変わらない');
+  assert.equal(values('設定').find((r) => r[0] === '発行元')[1], '見本商事株式会社（架空）');
+});
+
+test('VERSION と CHANGELOG.md の一番上の版が同じ。引き継ぎ書に見本の名前と版が出る', () => {
+  const { env, ss } = setup();
+  const changelog = fs.readFileSync(path.join(DIR, 'CHANGELOG.md'), 'utf8');
+  const top = changelog.match(/^## (\d+\.\d+\.\d+)/m)[1];
+  assert.equal(env.context.PDF_BATCH_VERSION, top);
+  env.context.writePdfBatchHandover();
+  const v = ss.getSheetByName('引き継ぎ書').values().map((r) => Array.from(r));
+  assert.ok(v.some((r) => r[0] === '帳票 PDF の一括作成（pdf-batch）' && r[1] === top && r[2] === '見本・納品物'));
+  assert.ok(v.some((r) => r[0] === 'スキーマの版：pdfBatch' && r[1] === '1'));
+  assert.ok(v.some((r) => r[0] === '設定：失敗の通知先' && r[1] === 'ops@example.com'));
 });
