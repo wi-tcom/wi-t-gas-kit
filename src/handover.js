@@ -49,7 +49,7 @@ WitGas.handover = (function () {
 
     return {
       generatedAt: new Date(),
-      versions: collectVersions_(cfg.app, props, propertyKeys),
+      versions: collectVersions_(cfg.app, props, propertyKeys, cfg.kit),
       scriptId: safe_(function () { return scriptApp.getScriptId(); }, notes, 'スクリプト ID'),
       timeZone: safe_(function () { return Session.getScriptTimeZone(); }, notes, 'タイムゾーン'),
       triggers: cfg.triggers ? collectTriggers_(scriptApp, resumeTriggers, notes) : 'skipped',
@@ -80,6 +80,8 @@ WitGas.handover = (function () {
    * @param {Array<{name: string, value: *, note?: string, secret?: boolean}>} [opts.settings] 設定値。secret なら値を伏せる
    * @param {string[]} [opts.stopSteps] 止め方（順番に書く）
    * @param {{name: string, version: string}} [opts.app] 見本・納品物の名前と版（VERSION）
+   * @param {Object|null} [opts.kit] 「版」の欄に出す部品集（WitGas）。省略時はこのファイルの WitGas。
+   *     null なら「入っていない」と書く（よそのプロジェクトを点検するとき向け）
    * @param {boolean} [opts.triggers=true] false ならトリガーの一覧を読まない（script.scriptapp の権限を持たない見本向け）
    * @param {Object} [opts.properties] / {Object} [opts.scriptApp] 差し替えるときだけ
    * @return {{sheetName: string, rows: number, notes: string[]}}
@@ -174,18 +176,19 @@ WitGas.handover = (function () {
   }
 
   /** 部品集・部品・見本の版と、スキーマの版 */
-  function collectVersions_(app, props, keys) {
-    var kit = typeof WitGas.version === 'string' ? WitGas.version : null;
-    var parts = Object.keys(WitGas).sort().filter(function (k) {
-      var v = WitGas[k];
+  function collectVersions_(app, props, keys, kitObject) {
+    var W = kitObject === undefined ? WitGas : kitObject;
+    var kit = W && typeof W.version === 'string' ? W.version : null;
+    var parts = !W ? [] : Object.keys(W).sort().filter(function (k) {
+      var v = W[k];
       return v && (typeof v === 'object' || typeof v === 'function') && typeof v.VERSION === 'string';
     }).map(function (k) {
-      return { name: 'WitGas.' + k, version: WitGas[k].VERSION, differs: kit !== null && WitGas[k].VERSION !== kit };
+      return { name: 'WitGas.' + k, version: W[k].VERSION, differs: kit !== null && W[k].VERSION !== kit };
     });
     var schemas = keys.filter(function (k) { return k.indexOf(SCHEMA_PREFIX) === 0; }).sort().map(function (k) {
       return { key: k.slice(SCHEMA_PREFIX.length), version: props.getProperty(k) };
     });
-    return { kit: kit, parts: parts, app: app || null, schemas: schemas };
+    return { kit: kit, parts: parts, app: app || null, schemas: schemas, none: !W };
   }
 
   function collectSheets_(ss, headers, notes, skipName) {
@@ -243,7 +246,7 @@ WitGas.handover = (function () {
     add(['名前', '版', '備考']);
     var v = info.versions;
     if (v.app) add([v.app.name, v.app.version, '見本・納品物']);
-    add(['部品集（WitGas.version）', v.kit || '（分からない）']);
+    add(['部品集（WitGas.version）', v.none ? '（入っていない）' : (v.kit || '（分からない）')]);
     v.parts.forEach(function (p) { add([p.name, p.version, p.differs ? '部品集の版と違う（入れ替え忘れの見込み）' : '']); });
     v.schemas.forEach(function (sc) { add(['スキーマの版：' + sc.key, sc.version, 'WitGas.migrate']); });
 
@@ -343,6 +346,9 @@ WitGas.handover = (function () {
     if (!Array.isArray(stopSteps) || !stopSteps.every(isText_)) {
       throw new TypeError(where + 'opts.stopSteps must be an array of strings');
     }
+    if (opts.kit !== undefined && opts.kit !== null && typeof opts.kit !== 'object') {
+      throw new TypeError(where + 'opts.kit must be an object or null');
+    }
     if (opts.triggers !== undefined && typeof opts.triggers !== 'boolean') {
       throw new TypeError(where + 'opts.triggers must be a boolean');
     }
@@ -375,6 +381,7 @@ WitGas.handover = (function () {
       inspect: inspect,
       app: opts.app ? { name: opts.app.name, version: opts.app.version } : null,
       triggers: opts.triggers !== false,
+      kit: opts.kit,
       properties: opts.properties,
       scriptApp: opts.scriptApp
     };
@@ -444,7 +451,7 @@ WitGas.handover = (function () {
 
   return {
     collect: collect,
-    VERSION: '0.3.0',
+    VERSION: '0.4.0',
     write: write,
     DEFAULT_SHEET_NAME: DEFAULT_SHEET_NAME
   };

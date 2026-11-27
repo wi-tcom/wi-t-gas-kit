@@ -12,7 +12,7 @@ var WitGas = WitGas || {};
 WitGas.settings = (function () {
   'use strict';
 
-  var VERSION = '0.3.0';
+  var VERSION = '0.4.0';
   var DEFAULT_SHEET_NAME = '設定';
   var HEADER = ['項目', '値', '説明'];
   var TYPES = ['string', 'number', 'boolean', 'email'];

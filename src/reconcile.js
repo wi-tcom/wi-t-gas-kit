@@ -510,7 +510,7 @@ WitGas.reconcile = (function () {
 
   return {
     compare: compare,
-    VERSION: '0.3.0',
+    VERSION: '0.4.0',
     summaryText: summaryText,
     writeReport: writeReport,
     DEFAULT_SHEET_NAME: DEFAULT_SHEET_NAME

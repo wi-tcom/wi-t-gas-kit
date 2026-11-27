@@ -1,0 +1,5 @@
+{
+  "file": "wit-inspect.js",
+  "exports": "WIT_INSPECT",
+  "entry": "entry.js"
+}

@@ -437,7 +437,7 @@ HTML から作った PDF の体裁に崩れの指摘はなかった（「シン�
 | E8 | 新しいスプレッドシートに見本を入れ、何も編集しないまま「照合 → 照合する」の前に、スクリプトで `getSpreadsheetTimeZone()` を見る。続けて「見本のデータを入れる」→「照合する」 | 最初は `America/Los_Angeles` のことがある。照合したあとは `Asia/Tokyo` になり、「実行記録」の時刻が日本時間 |
 | E9 | 「設定」の「呼び名（CSV）」を `信金` に、「比べる列」を `金額` にして「照合する」。続けて「日付の列」を空にして「照合する」 | 1 回目は「「設定」シートの「日付の列」には「キーの列」か「比べる列」にある列名を書いてください。…」の知らせで、何もしない。2 回目は `一致 3 / 不一致 1 / 会計だけ 1 / 信金だけ 1 / キー重複 0 / キーなし 0`（入金日の違いの INV-002 が一致になる）。コードは変えていない |
 | E10 | 「点検する」（通知先が `ops@example.com` のまま） | 「「失敗の通知先」が見本のまま（ops@example.com）です。…」と出る。通知先を変えてもう一度 → 「点検：問題は見つかりませんでした（CSV照合（csv-reconcile） 1.0.0、スキーマの版 1）」 |
-| E11 | 「引き継ぎ書を作る」 | 「版」に「CSV照合（csv-reconcile） 1.0.0」・部品集 0.3.0・部品 9 つ・スキーマの版 1。「トリガー」は「（出していない：…権限を持たない）」で、「読めなかったもの」は出ない。「権限」の 3 つが「はい」 |
+| E11 | 「引き継ぎ書を作る」 | 「版」に「CSV照合（csv-reconcile） 1.0.0」・部品集 0.3.0 以降の版・部品 9 つ・スキーマの版 1。「トリガー」は「（出していない：…権限を持たない）」で、「読めなかったもの」は出ない。「権限」の 3 つが「はい」 |
 | E12 | 前の形からの版上げの練習：前の形（`main` の `9e51a03` の `examples/csv-reconcile/main.js` と、その `parts.json` の 5 つ）を入れたスプレッドシートで照合しておき、README の「前の形（版番号なし）から 1.0.0 に上げるとき」の順にたどる | 入れ替えたあと「照合する」→「設定がまだ用意されていません…」。「設定と表を用意する」で 0 → 1。控えた通知先を「設定」に入れ直して「点検する」で問題なし。「照合する」で前と同じ結果。会計・CSV貼り付け・実行記録の中身は変わらない |
 
 E6 で使う CSV：
@@ -476,8 +476,33 @@ INV-006,ﾌﾒｲ,"10,000",2026/1/9
 | A6 | 「明細」の E1（単価）を `値段` に変えて「PDF を作る」 | 「「明細」の見出し（1 行目）に「単価」がありません。」の知らせ（英語のエラーは出ない）。「実行記録」に「失敗／SheetFormatError」、メールが 1 通 |
 | A7 | 「設定」の「失敗の通知先」を `abc` にして「PDF を作る」 | 「「設定」シートの「失敗の通知先」の値がメールアドレスになっていません。…」の知らせ。「実行記録」もメールも増えない |
 | A8 | 「点検する」 | 問題がなければ「点検：問題は見つかりませんでした（… 1.0.0、スキーマの版 1）」。A6 の状態なら「値段」がない、と出る |
-| A9 | 「引き継ぎ書を作る」 | 「版」に「帳票 PDF の一括作成（pdf-batch） 1.0.0」と部品集の版（0.3.0）・部品 9 つ・スキーマの版 1。「権限」の 5 つが「はい」。「設定値」に設定シートの値、「止め方」に 4 つ |
+| A9 | 「引き継ぎ書を作る」 | 「版」に「帳票 PDF の一括作成（pdf-batch） 1.0.0」と部品集の版（0.4.0）・部品 9 つ・スキーマの版 1。「権限」の 5 つが「はい」。「設定値」に設定シートの値、「止め方」に 4 つ |
 | A10 | 版上げの練習：A2 のあと、`main.js` の `PDF_BATCH_STEPS` に段 2（作成記録の E1 に「送信日時」を書く。あれば書かない）を足して貼り直し、README の「版上げのしかた」の順にたどる | 「設定と表を用意する」でスキーマの版 1 → 2、作成記録に列が足され、中身と設定シートの値は変わらない。もう一度動かしても変わらない。「点検する」で問題なし。コピーに戻す手順で元に戻せる |
+
+### 見本：GAS の点検（gas-inspect）
+
+点検の練習用に、新しいスプレッドシートで「先方のプロジェクト」役を作ってから確かめます。
+
+- 準備：「拡張機能 → Apps Script」で、次の関数を貼ったファイル `customer` を作る。`appsscript.json` に `oauthScopes` は書かない（GAS に推し量らせる）。
+  - `function dailyReport() { return SpreadsheetApp.getActiveSpreadsheet().getSheets().length; }`
+  - `function onFormSubmitSafe(e) { var l = LockService.getScriptLock(); if (!l.tryLock(0)) return; try { return 1; } catch (err) { MailApp.sendEmail('ops@example.com', 'x', 'y'); } finally { l.releaseLock(); } }`
+  - `function onceLater() { return 1; }`
+  - `function removedLater() { return 1; }`
+  - `const arrowFn = () => 1;`
+  - `function makeTriggers() { ScriptApp.newTrigger('dailyReport').timeBased().everyDays(1).atHour(3).create(); ScriptApp.newTrigger('onceLater').timeBased().after(60000).create(); ScriptApp.newTrigger('onceLater').timeBased().after(60000).create(); ScriptApp.newTrigger('removedLater').timeBased().everyDays(1).atHour(4).create(); }`
+- `makeTriggers` を 1 回実行し、2 分ほど待って `onceLater` の 2 つが動き終わる（トリガーの画面で「無効」になる）のを見る。そのあと `removedLater` と `makeTriggers` の関数を消して保存する（トリガーは 4 つ残る）。
+- `npm run example:build -- gas-inspect` で `dist/gas-inspect/wit-inspect.js` を作る。
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| I1 | トリガーの画面を写真に撮る（数・関数・無効の印）。README の「点検のしかた」2 のとおり `wit-inspect` を足し、`witInspect` を実行 | 承認の画面に、トリガーとこのスプレッドシートの権限が出る。「点検結果」と「引き継ぎ書」ができる。「点検結果」の「トリガーの数」が 4 個。実行ログにエラーなし。実行時間を記録する |
+| I2 | 「点検結果」を見る | `dailyReport` は「二重実行」「失敗の扱い」が「気をつける」。`onFormSubmitSafe` はトリガーがないので行が出ない。`removedLater`（関数がない）は「直したほうがよい」。`onceLater` は「時間主導型が 2 個」で「気をつける」。「動き終わったトリガー」が「目で確かめる」。最後の行が「後片付け：元に戻したか」 |
+| I3 | 関数の見つけ方：「点検結果」の「関数」の行を見る | 「グローバルの関数 3 個」で、`dailyReport`・`onFormSubmitSafe`・`onceLater` の 3 つ。`arrowFn`（README の「できないこと」のとおり）・`witInspect`・点検のファイルの中の関数（`gasInspect…`）・GAS のサービスの名前は出ない。もし `arrowFn` が出たら、README の「できないこと」を直す |
+| I4 | 「引き継ぎ書」を見る | 「版」の部品集が「（入っていない）」。「トリガー」に 4 つ。「権限」に承認済みのものが並び、理由は「（理由が書かれていない）」。シートの値・関数の中身がどこにもない |
+| I5 | I1 の写真とトリガーの画面を見比べる | トリガーの数・関数・無効の印が変わっていない（点検はトリガーを作らず消さない） |
+| I6 | 後片付け：README の「点検のしかた」6 のとおりに戻す | `wit-inspect` がなくなる。「概要」の「プロジェクトの OAuth スコープ」に、点検のために増えた権限が出ない（`customer` が使う分だけになる）。`dailyReport` を実行すると、承認を求められずに動く |
+| I7 | `oauthScopes` を書いたプロジェクトで：`customer` の `appsscript.json` に `spreadsheets.currentonly` だけを書いてから I1 をやり直す（README の 3 のとおり `script.scriptapp` を足す） | 足す前は `witInspect` が承認の画面を出すか、トリガーの行が「目で確かめる」になる。足したあとは I1 と同じ。I6 で `appsscript.json` を控えに戻すと `script.scriptapp` が消える |
+| I8 | 同じスプレッドシートに `点検結果` という名前の空でないシートを作り、`witInspect` を実行 | 「別のシートがあるので、何も書きませんでした」のエラー。そのシートも「引き継ぎ書」も変わらない |
 
 ## 結果の記録
 

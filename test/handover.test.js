@@ -296,3 +296,12 @@ test('triggers: false なら、トリガーの一覧を読まず、出してい�
   assert.deepEqual(Array.from(res.notes), []);
   assert.throws(() => env.WitGas.handover.write({ triggers: 'no' }), /opts\.triggers must be a boolean/);
 });
+
+test('kit：よそのプロジェクトを点検するときは、見る部品集を渡せる（null なら「入っていない」）', () => {
+  const { env, section } = setup();
+  env.WitGas.handover.write({ kit: null });
+  assert.deepEqual(trim(section('版')).slice(1), [['部品集（WitGas.version）', '（入っていない）']]);
+  env.WitGas.handover.write({ kit: { version: '0.1.0', lock: { VERSION: '0.1.0' } } });
+  assert.deepEqual(trim(section('版')).slice(1), [['部品集（WitGas.version）', '0.1.0'], ['WitGas.lock', '0.1.0']]);
+  assert.throws(() => env.WitGas.handover.write({ kit: 'x' }), /opts\.kit must be an object or null/);
+});

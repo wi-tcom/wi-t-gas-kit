@@ -236,7 +236,7 @@ WitGas.runlog = (function () {
 
   return {
     append: append,
-    VERSION: '0.3.0',
+    VERSION: '0.4.0',
     validateOptions: validateOptions,
     HEADER: HEADER.slice(),
     RESULT_LABELS: Object.freeze(Object.assign({}, RESULT_LABELS)),
