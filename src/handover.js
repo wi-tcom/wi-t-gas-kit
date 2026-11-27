@@ -17,6 +17,7 @@ WitGas.handover = (function () {
   var MAX_HEADER_COLUMNS = 20;
   var MAX_CELL_LENGTH = 300;
   var RESUME_PREFIX = 'WitGas.resume:';
+  var SCHEMA_PREFIX = 'WitGas.schema:';
   var DATE_FORMAT = 'yyyy-mm-dd hh:mm:ss';
   var COLUMN_WIDTHS = [220, 260, 200, 200, 200];
   var EVENT_LABELS = {
@@ -48,6 +49,7 @@ WitGas.handover = (function () {
 
     return {
       generatedAt: new Date(),
+      versions: collectVersions_(cfg.app, props, propertyKeys),
       scriptId: safe_(function () { return scriptApp.getScriptId(); }, notes, 'スクリプト ID'),
       timeZone: safe_(function () { return Session.getScriptTimeZone(); }, notes, 'タイムゾーン'),
       triggers: collectTriggers_(scriptApp, resumeTriggers, notes),
@@ -77,6 +79,7 @@ WitGas.handover = (function () {
    * @param {Array<{scope: string, reason: string}>} [opts.scopes] appsscript.json の oauthScopes と、使う理由
    * @param {Array<{name: string, value: *, note?: string, secret?: boolean}>} [opts.settings] 設定値。secret なら値を伏せる
    * @param {string[]} [opts.stopSteps] 止め方（順番に書く）
+   * @param {{name: string, version: string}} [opts.app] 見本・納品物の名前と版（VERSION）
    * @param {Object} [opts.properties] / {Object} [opts.scriptApp] 差し替えるときだけ
    * @return {{sheetName: string, rows: number, notes: string[]}}
    */
@@ -155,7 +158,10 @@ WitGas.handover = (function () {
   function collectProperties_(props, keys) {
     return keys.slice().sort().map(function (key) {
       var detail = '（値は伏せる）';
-      if (key.indexOf(RESUME_PREFIX) === 0) {
+      if (key.indexOf(SCHEMA_PREFIX) === 0) {
+        // WitGas.migrate のスキーマの版（数だけで、業務データは入らない）
+        detail = 'スキーマの版（' + props.getProperty(key) + '）';
+      } else if (key.indexOf(RESUME_PREFIX) === 0) {
         // WitGas.resume の保存は進み具合だけで、業務データは入らない
         var s = parseJson_(props.getProperty(key));
         detail = s && typeof s.cursor === 'number'
@@ -164,6 +170,21 @@ WitGas.handover = (function () {
       }
       return { key: key, detail: detail };
     });
+  }
+
+  /** 部品集・部品・見本の版と、スキーマの版 */
+  function collectVersions_(app, props, keys) {
+    var kit = typeof WitGas.version === 'string' ? WitGas.version : null;
+    var parts = Object.keys(WitGas).sort().filter(function (k) {
+      var v = WitGas[k];
+      return v && (typeof v === 'object' || typeof v === 'function') && typeof v.VERSION === 'string';
+    }).map(function (k) {
+      return { name: 'WitGas.' + k, version: WitGas[k].VERSION, differs: kit !== null && WitGas[k].VERSION !== kit };
+    });
+    var schemas = keys.filter(function (k) { return k.indexOf(SCHEMA_PREFIX) === 0; }).sort().map(function (k) {
+      return { key: k.slice(SCHEMA_PREFIX.length), version: props.getProperty(k) };
+    });
+    return { kit: kit, parts: parts, app: app || null, schemas: schemas };
   }
 
   function collectSheets_(ss, headers, notes, skipName) {
@@ -215,6 +236,15 @@ WitGas.handover = (function () {
     rows.push(pad_([MARKER, info.generatedAt]));
     add(['スクリプト ID', info.scriptId || '（読めなかった）']);
     add(['タイムゾーン', info.timeZone || '（読めなかった）']);
+
+    blank();
+    add(['■ 版', '次の版上げのときは、ここと見本の CHANGELOG.md を見比べてください。']);
+    add(['名前', '版', '備考']);
+    var v = info.versions;
+    if (v.app) add([v.app.name, v.app.version, '見本・納品物']);
+    add(['部品集（WitGas.version）', v.kit || '（分からない）']);
+    v.parts.forEach(function (p) { add([p.name, p.version, p.differs ? '部品集の版と違う（入れ替え忘れの見込み）' : '']); });
+    v.schemas.forEach(function (sc) { add(['スキーマの版：' + sc.key, sc.version, 'WitGas.migrate']); });
 
     blank();
     add(['■ トリガー', 'この引き継ぎ書を作った人が作ったトリガーだけが出ます。動き終わった 1 回だけのトリガー（トリガーの画面で「無効」）も並びます。時間主導型の時刻はトリガーの画面で確かめてください。']);
@@ -310,6 +340,9 @@ WitGas.handover = (function () {
     if (!Array.isArray(stopSteps) || !stopSteps.every(isText_)) {
       throw new TypeError(where + 'opts.stopSteps must be an array of strings');
     }
+    if (opts.app !== undefined && (!opts.app || !isText_(opts.app.name) || !isText_(opts.app.version))) {
+      throw new TypeError(where + 'opts.app must be {name, version}');
+    }
     if (opts.inspect !== undefined && !Array.isArray(opts.inspect)) {
       throw new TypeError(where + 'opts.inspect must be an array');
     }
@@ -334,6 +367,7 @@ WitGas.handover = (function () {
       }),
       stopSteps: stopSteps,
       inspect: inspect,
+      app: opts.app ? { name: opts.app.name, version: opts.app.version } : null,
       properties: opts.properties,
       scriptApp: opts.scriptApp
     };
@@ -403,6 +437,7 @@ WitGas.handover = (function () {
 
   return {
     collect: collect,
+    VERSION: '0.2.0',
     write: write,
     DEFAULT_SHEET_NAME: DEFAULT_SHEET_NAME
   };

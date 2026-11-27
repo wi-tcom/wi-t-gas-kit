@@ -143,6 +143,7 @@ WitGas.lock = (function () {
 
   return {
     run: run,
+    VERSION: '0.2.0',
     DEFAULT_WAIT_MS: DEFAULT_WAIT_MS
   };
 })();

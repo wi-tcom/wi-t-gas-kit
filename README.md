@@ -16,6 +16,7 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 | `WitGas.resume` | 6 分の上限の前に区切って続きを実行 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.runlog` / `WitGas.notify` | 実行記録とエラー通知 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.guard` | 上の部品を 1 行で包む入り口 | 実装済み（実機確認：一部済み。[結果](docs/manual-check.md#結果の記録)） |
+| `WitGas.settings` / `WitGas.migrate` | 設定シートの読み書き／データの形の移行 | 実装済み（Node のテストのみ。実機確認は未） |
 | `WitGas.handover` | 引き継ぎ書をシートに書く | 実装済み（実機確認：H1〜H6 合格。[結果](docs/manual-check.md#結果の記録)） |
 | `WitGas.reconcile` | 2 つの表をキーで突き合わせる | 実装済み（実機確認：一部済み。見本「CSV照合」と C6 で確認、C1〜C5 は未。[結果](docs/manual-check.md#結果の記録)） |
 
@@ -513,6 +514,7 @@ function writeHandover() {   // スクリプトエディタから実行する
 | 節 | 中身 | どこから |
 |----|------|----------|
 | （頭） | 作成日時・スクリプト ID・タイムゾーン | GAS |
+| 版 | 見本・納品物の名前と版、部品集の版、入っている部品ごとの版（部品集の版と違えば印）、スキーマの版 | `opts.app`、各部品の `VERSION`、`WitGas.schema:*` |
 | トリガー | 関数・種類（時間主導型・開いたとき など）・起動元・ID。`WitGas.resume` の続きのトリガーには印をつける | `ScriptApp.getProjectTriggers()` |
 | 権限 | 権限・理由・承認済みか | `opts.scopes`（呼び出し側が書く）と、GAS が返す承認済みの権限 |
 | スクリプトのプロパティ | キーだけ。**値は書かない**。`WitGas.resume` の途中なら進み具合（cursor・runs） | `PropertiesService` |
@@ -530,6 +532,7 @@ function writeHandover() {   // スクリプトエディタから実行する
 | `scopes` | — | `[{scope, reason}]`。`appsscript.json` の `oauthScopes` と同じものを、理由をつけて書く。 |
 | `settings` | — | `[{name, value, note?, secret?}]`。 |
 | `stopSteps` | — | 止め方の手順（文字の配列）。 |
+| `app` | — | `{name, version}`。見本・納品物の名前と版（`main.js` の `VERSION`）。 |
 | `inspect` | 書き先 | 構成を書くスプレッドシート（オブジェクトか ID の配列）。 |
 | `headers` | `false` | 各シートの 1 行目（見出し）も書く。1 行目が見出しでないシートがあると、業務データが引き継ぎ書に載るので、既定はオフ。 |
 
@@ -548,12 +551,57 @@ function writeHandover() {   // スクリプトエディタから実行する
 - 「引き継ぎ書」シートそのものは、シートの構成に入れません。
 - シートを新しく作るときだけ列幅を決めます。`=`・`+`・`-`・`@` で始まる値は、式として読まれないよう先頭に `'` をつけます。
 
+## WitGas.settings — 設定シート
+
+先方ごとに変える値（シート名・通知先・列名・上限など）を「設定」シートに置き、コードから読みます。コードを入れ替えても、設定シートの値は消えません。
+
+```js
+var ITEMS = [
+  { key: '明細のシート', value: '明細', note: '帳票のもとの表' },
+  { key: '1 回の上限（ミリ秒）', value: 270000, type: 'number' },
+  { key: '失敗の通知先', value: 'ops@example.com', type: 'email', required: true }
+];
+WitGas.settings.ensure({ items: ITEMS });       // なければ作る。足りない項目だけ足す（今ある値は書き換えない）
+var s = WitGas.settings.read({ items: ITEMS }); // s['失敗の通知先'] など
+```
+
+- シートの形：1 行目が見出し（項目・値・説明）、2 行目から 1 項目 1 行。
+- `type` は `string`（既定）・`number`・`boolean`（「はい」「いいえ」も可）・`email`。`required: true` は空を許さない。
+- 値が型に合わないときは `SettingsError` を投げます。メッセージは「「設定」シートの「失敗の通知先」の値がメールアドレスになっていません。」のように項目名だけで、値は書きません。
+- 鍵などの秘密の値はシートに置かず、スクリプトのプロパティに置いてください。
+
+## WitGas.migrate — データの形の移行
+
+版上げでシートや列の形が変わるときに、決まった順の「段」を動かします。今の形の版（スキーマの版）は、スクリプトのプロパティ `WitGas.schema:<key>` に持ちます。
+
+```js
+var STEPS = [
+  { version: 1, name: '設定シートと作成記録を作る', run: function () { /* なければ作る */ } },
+  { version: 2, name: '作成記録に「送信日時」の列を足す', run: function () { /* なければ足す */ } }
+];
+WitGas.migrate.run({ key: 'pdfBatch', steps: STEPS });  // → { from, to, ran }
+WitGas.migrate.needed({ key: 'pdfBatch', steps: STEPS }); // まだ動いていない段があれば true
+```
+
+- まだ動いていない段だけを、版の小さい順に動かし、1 段ごとに版を保存します。何度呼んでも、済んだ段は動きません。
+- 段は「何度動かしても結果が変わらない」書き方にしてください（なければ作る、なければ足す）。途中で失敗しても、そこまでの版が残り、直してもう一度呼べば続きから動きます。
+- データの形がコードより新しいとき（古いコードに戻したとき）は、触らずにエラーにします。
+- 二重に動かないよう、`WitGas.guard` で包んで呼んでください。
+
+## 部品の版
+
+- 部品集の版は `WitGas.version`（いまは `0.2.0`）。各部品も同じ番号の `VERSION` を持ちます（`WitGas.lock.VERSION` など）。
+- 版を上げるときは、`src/` のファイルを入れ替えるだけです。部品は手で直さないでください（先方ごとの手直しは見本の `main.js` に書く）。
+- 引き継ぎ書の「版」の欄に、入っている部品と版が出ます。部品集の版と違う部品には印がつくので、入れ替え忘れに気づけます。
+- 考え方は [docs/design/versioning.md](docs/design/versioning.md) にあります。
+
 ## 権限（oauthScopes）
 
 `appsscript.json` の `oauthScopes` を明示し、必要なものだけを並べます。部品を追加するたびに、ここに理由を書きます。
 
 | 権限 | 使う部品 | 理由 |
 |------|----------|------|
+| （追加なし） | `WitGas.settings`・`WitGas.migrate` | 設定シートは開いているスプレッドシート（`spreadsheets.currentonly` で足りる見込み）、スキーマの版はスクリプトのプロパティ |
 | （追加なし） | `WitGas.handover` | トリガーの一覧に `script.scriptapp`、書き込みとほかのスプレッドシートを開くのに `spreadsheets` を使う（どちらもこの表のほかの行にあるもの）。`script.scriptapp` がなければトリガーは「読めなかった」と書く。承認済みの権限を読むのに追加の権限は要らない想定（実機確認は H2） |
 | （追加なし） | `WitGas.guard` | 中で使う部品（lock・runlog・notify）の権限だけ。`log: false` なら `spreadsheets`、`notify: false` なら `script.send_mail` は要らない |
 | （なし） | `WitGas.lock` | `LockService` と `console` だけを使う。追加の権限を求めない想定（実機確認は L1） |
