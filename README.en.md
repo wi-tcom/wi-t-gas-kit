@@ -27,6 +27,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu); settings sheet and upgrade steps (version 1.0.0) | Implemented (partly verified on GAS: E1–E5, E7, E8 passed; E6 not yet; see [results](docs/manual-check.md), Japanese) |
 | [Batch PDF documents](examples/pdf-batch/README.en.md) | One quotation PDF per row into a folder the script creates; resumable, settings sheet, upgrade steps (version 1.0.0) | Implemented (Node tests only; not yet verified on GAS; probe P0 done) |
 | [GAS inspection](examples/gas-inspect/README.en.md) | Add one file to a GAS project already in use to inspect triggers, scopes, the 6-minute limit and failure handling, and write a handover sheet; added only with the client's consent and removed afterwards (version 1.0.0) | Implemented (Node tests only; not yet verified on GAS) |
+| [Form → approval → notification](examples/form-approval/README.en.md) | Import form responses into an approval sheet every 10 minutes; when the approver chooses approve or return, email the applicant. Never sends twice; settings sheet and upgrade steps (version 1.0.0) | Implemented (Node tests only; not yet verified on GAS) |
 
 ## Installation
 

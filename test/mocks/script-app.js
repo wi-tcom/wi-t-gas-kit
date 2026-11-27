@@ -4,6 +4,8 @@
  * ScriptApp の偽物（時間主導型トリガーの作成・一覧・削除だけ）。
  *
  * - newTrigger(name).timeBased().after(ms).create() で 1 回だけ動くトリガーを作る。
+ * - newTrigger(name).timeBased().everyMinutes(n).create() でくり返すトリガーを作る（fireNext では動かさない。
+ *   テストでは関数を直接呼ぶ）。n は 1・5・10・15・30。
  * - 動いた（発火した）トリガーも、deleteTrigger されるまで一覧に残る。
  *   （実機でも残るかは docs/manual-check.md の R5 で確かめる）
  * - 1 プロジェクトのトリガーは 20 個まで。越えると create() が失敗する。
@@ -66,7 +68,13 @@ function createScriptApp(clock) {
       return {
         timeBased() {
           let afterMs = null;
+          let everyMinutes = null;
           const builder = {
+            everyMinutes(n) {
+              if ([1, 5, 10, 15, 30].indexOf(n) < 0) throw new Error('everyMinutes: 1, 5, 10, 15 or 30');
+              everyMinutes = n;
+              return builder;
+            },
             after(ms) {
               if (typeof ms !== 'number' || ms < 0) throw new TypeError('after: ms must be >= 0');
               afterMs = ms;
@@ -77,6 +85,11 @@ function createScriptApp(clock) {
                 const err = state.createError;
                 state.createError = null;
                 throw err;
+              }
+              if (everyMinutes !== null) {
+                const t = makeTrigger(handler, Infinity);
+                t._everyMinutes = everyMinutes;
+                return addTrigger(t);
               }
               if (afterMs === null) throw new Error('time-based trigger needs a schedule');
               return addTrigger(makeTrigger(handler, clock.now() + afterMs));

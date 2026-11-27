@@ -39,14 +39,15 @@ function createUtilities() {
       return makeBlob(String(data), contentType || 'text/plain', name || null);
     },
     formatDate(date, timeZone, format) {
-      if (format !== 'yyyy-MM-dd HH:mm:ss' && format !== 'yyyy-MM-dd') throw new Error('unsupported format in mock: ' + format);
+      if (['yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd HH:mm', 'yyyy-MM-dd'].indexOf(format) < 0) throw new Error('unsupported format in mock: ' + format);
       const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
       }).formatToParts(new Date(date.getTime()));
       const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
       const day = `${p.year}-${p.month}-${p.day}`;
-      return format === 'yyyy-MM-dd' ? day : `${day} ${p.hour}:${p.minute}:${p.second}`;
+      if (format === 'yyyy-MM-dd') return day;
+      return format === 'yyyy-MM-dd HH:mm' ? `${day} ${p.hour}:${p.minute}` : `${day} ${p.hour}:${p.minute}:${p.second}`;
     }
   };
 }
