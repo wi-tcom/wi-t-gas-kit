@@ -222,14 +222,14 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 ### How it splits
 
-- The continuation trigger is set for 1 minute later, but in the on-GAS check (2026-11-25) it ran **about 87–94 seconds** after pausing.
+- The continuation trigger is set for 1 minute later, but in the on-GAS checks (2026-11-25 and 27) it ran **about 65–94 seconds** after pausing.
   Total time is roughly (time per run, up to 4.5 min, + about 1.5 min wait) × runs. For example, 10 items of 1 minute each took 3 runs and about 13 minutes.
 
 - It moves on to the next item only if that item would still fit in the budget even if it took as long as the longest item so far in this execution.
 - Time is counted from the call to `run`. If you do slow setup before it, lower `budgetMs` accordingly.
 - The first item is estimated with the longest item of the previous run. If most of the budget is already used before the first item (reading the saved progress, deleting the fired trigger), the run processes nothing and schedules the continuation (`stalled: true`, count 0).
   After **3 such runs in a row**, it throws `ResumeStallError` instead of scheduling again, so a job never keeps rescheduling without progress. The cursor is kept; call `run` after fixing the cause.
-  This was added after a continuation run exceeded 6 minutes (392.8 s) in the on-GAS check on 2026-11-26. The cause is not known yet, so every run logs `[WitGas.resume] start: ... (setup …ms)` first and `longest step …ms` when pausing or finishing.
+  This was added after a continuation run exceeded 6 minutes (392.8 s) in the on-GAS check on 2026-11-26. A re-check on 2026-11-27 under the same conditions (3 triggers, 2 of them fired) did not reproduce it; setup took 297–330 ms. The cause is not known, so every run logs `[WitGas.resume] start: ... (setup …ms)` first and `longest step …ms` when pausing or finishing.
 - On the first run, and when a single item is longer than the budget, at least one item is processed.
   Still, split `step` if a single item could exceed the 6-minute limit.
 
