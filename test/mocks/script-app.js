@@ -17,18 +17,23 @@ const MAX_TRIGGERS = 20;
 
 function createScriptApp(clock) {
   const triggers = [];
-  const state = { createError: null, created: 0, deleted: 0 };
+  const state = {
+    createError: null, created: 0, deleted: 0,
+    scriptId: '1ScriptIdForTests', authorizedScopes: [], authModes: [], authError: null, getTriggersError: null
+  };
   let nextId = 1;
 
-  function makeTrigger(handler, dueAt) {
+  function makeTrigger(handler, dueAt, kind) {
     const id = String(1000 + nextId++);
+    const k = kind || {};
     const t = {
       _dueAt: dueAt,
       _fired: false,
       getUniqueId: () => id,
       getHandlerFunction: () => handler,
-      getEventType: () => 'CLOCK',
-      getTriggerSource: () => 'CLOCK'
+      getEventType: () => k.eventType || 'CLOCK',
+      getTriggerSource: () => k.source || 'CLOCK',
+      getTriggerSourceId: () => (k.sourceId === undefined ? null : k.sourceId)
     };
     return t;
   }
@@ -43,6 +48,17 @@ function createScriptApp(clock) {
   }
 
   const ScriptApp = {
+    AuthMode: { FULL: 'FULL', LIMITED: 'LIMITED', NONE: 'NONE' },
+    getScriptId: () => state.scriptId,
+    getAuthorizationInfo(mode) {
+      if (state.authError) throw state.authError;
+      if (state.authorizedScopes === null) return { getAuthorizationStatus: () => 'NOT_REQUIRED' };
+      state.authModes.push(mode);
+      return {
+        getAuthorizationStatus: () => 'NOT_REQUIRED',
+        getAuthorizedScopes: () => state.authorizedScopes.slice()
+      };
+    },
     newTrigger(handler) {
       if (typeof handler !== 'string' || handler === '') {
         throw new TypeError('newTrigger: function name required');
@@ -71,6 +87,11 @@ function createScriptApp(clock) {
       };
     },
     getProjectTriggers() {
+      if (state.getTriggersError) {
+        const err = state.getTriggersError;
+        state.getTriggersError = null;
+        throw err;
+      }
       return triggers.slice();
     },
     deleteTrigger(trigger) {
@@ -83,8 +104,18 @@ function createScriptApp(clock) {
     },
 
     // --- テスト用 ---
-    addOtherTrigger(handler) {
-      return addTrigger(makeTrigger(handler, Infinity));
+    addOtherTrigger(handler, kind) {
+      return addTrigger(makeTrigger(handler, Infinity, kind));
+    },
+    /** 承認済みの権限（null なら getAuthorizedScopes が無い古い形を返す） */
+    setAuthorizedScopes(scopes) {
+      state.authorizedScopes = scopes;
+    },
+    failAuthorizationInfo(err) {
+      state.authError = err;
+    },
+    failNextGetTriggers(err) {
+      state.getTriggersError = err;
     },
     pending() {
       return triggers.filter((t) => !t._fired && t._dueAt !== Infinity);

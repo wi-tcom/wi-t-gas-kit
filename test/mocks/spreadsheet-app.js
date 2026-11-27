@@ -113,12 +113,13 @@ function createSheet(name) {
   return sheet;
 }
 
-function createSpreadsheet(id, timeZone) {
+function createSpreadsheet(id, timeZone, name) {
   const sheets = new Map();
   const toasts = [];
   let tz = timeZone || 'Asia/Tokyo';
   const ss = {
     getId: () => id,
+    getName: () => name || id,
     getSpreadsheetTimeZone: () => tz,
     setSpreadsheetTimeZone(z) { tz = z; },
     getUrl: () => 'https://docs.google.com/spreadsheets/d/' + id + '/edit',
@@ -187,7 +188,7 @@ function createSpreadsheetApp() {
     },
     // --- テスト用 ---
     addSpreadsheet(id, options) {
-      const ss = createSpreadsheet(id, options && options.timeZone);
+      const ss = createSpreadsheet(id, options && options.timeZone, options && options.name);
       books.set(id, ss);
       if (options && options.active) active = ss;
       return ss;

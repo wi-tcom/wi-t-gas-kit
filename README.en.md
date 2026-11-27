@@ -16,6 +16,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.guard` | One-line wrapper combining the above | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.handover` | Write a handover document to a sheet | Implemented (verified on GAS: H1–H6 passed; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.reconcile` | Match two tables by key | Implemented (partly verified on GAS through the CSV example and C6; C1–C5 not yet; see [results](docs/manual-check.md), Japanese) |
 
 ### Examples
@@ -212,11 +213,12 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 ### Return value
 
-`{ done, cursor, processed, runs, scheduled, elapsedMs }`
+`{ done, cursor, processed, runs, scheduled, elapsedMs, setupMs, stalled }`
 
 - `done`: `true` when everything is processed; `false` when it will continue ("continues" in the run log).
 - `cursor`: next position. `processed`: items processed in this execution. `runs`: execution count.
 - `scheduled`: `true` if a continuation trigger was created.
+- `setupMs`: time from the call to `run` until the first item. `stalled`: `true` if the run paused before the first item (see below).
 
 ### How it splits
 
@@ -225,7 +227,10 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 - It moves on to the next item only if that item would still fit in the budget even if it took as long as the longest item so far in this execution.
 - Time is counted from the call to `run`. If you do slow setup before it, lower `budgetMs` accordingly.
-- At least one item is processed per execution, so a job never keeps rescheduling without progress.
+- The first item is estimated with the longest item of the previous run. If most of the budget is already used before the first item (reading the saved progress, deleting the fired trigger), the run processes nothing and schedules the continuation (`stalled: true`, count 0).
+  After **3 such runs in a row**, it throws `ResumeStallError` instead of scheduling again, so a job never keeps rescheduling without progress. The cursor is kept; call `run` after fixing the cause.
+  This was added after a continuation run exceeded 6 minutes (392.8 s) in the on-GAS check on 2026-11-26. The cause is not known yet, so every run logs `[WitGas.resume] start: ... (setup …ms)` first and `longest step …ms` when pausing or finishing.
+- On the first run, and when a single item is longer than the budget, at least one item is processed.
   Still, split `step` if a single item could exceed the 6-minute limit.
 
 ### On failure
@@ -269,7 +274,7 @@ To continue right away, set `waitMs` on `lock.run` (the wait counts toward the 6
 Script property `WitGas.resume:<key>` holds this JSON. It contains no business data.
 
 ```json
-{"v":1,"cursor":4,"runs":1,"firstStartedAt":1767571200000,"triggerId":"1234567890"}
+{"v":1,"cursor":4,"runs":1,"firstStartedAt":1767571200000,"triggerId":"1234567890","lastStepMs":60000,"stalls":0}
 ```
 
 ### Other functions
@@ -461,12 +466,75 @@ Returns a counts-only line such as `一致 120 / 不一致 3 / 左だけ 1 / 右
 The report sheet contains keys and values (business data) by nature. Keep it in the client's spreadsheet and mind its sharing settings.
 The run log and notifications get only the counts from `summaryText`. Error messages name columns but never contain data values.
 
+## WitGas.handover — handover document
+
+Collects what a successor needs and writes it to a "引き継ぎ書" (handover) sheet. Regenerate it at delivery and whenever the owner changes. Labels are in Japanese.
+
+```js
+function writeHandover() {   // run from the script editor
+  WitGas.handover.write({
+    scopes: [                // oauthScopes from appsscript.json, with reasons
+      { scope: 'https://www.googleapis.com/auth/spreadsheets', reason: 'write the run log and results' },
+      { scope: 'https://www.googleapis.com/auth/script.scriptapp', reason: 'create/delete continuation triggers' },
+      { scope: 'https://www.googleapis.com/auth/script.send_mail', reason: 'mail failures' }
+    ],
+    settings: [              // settings; values with secret: true are masked
+      { name: 'Recipient', value: GUARD.notify.to, note: 'failure mails' }
+    ],
+    stopSteps: [             // how to stop, in order
+      'Delete the dailySummary trigger on the Triggers page',
+      "To stop midway, run WitGas.resume.cleanup('invoicePdf')"
+    ]
+  });
+}
+```
+
+### Sections
+
+| Section | Content | Source |
+|---------|---------|--------|
+| (top) | Generated at, script ID, time zone | GAS |
+| Triggers | Function, type (time-driven, on open, ...), source, ID; `WitGas.resume` continuation triggers are marked | `ScriptApp.getProjectTriggers()` |
+| Scopes | Scope, reason, authorized? | `opts.scopes` (written by the caller) checked against the authorized scopes GAS reports |
+| Script properties | Keys only. **Values are never written.** For `WitGas.resume`, the progress (cursor, runs) | `PropertiesService` |
+| Sheet structure | Sheet name, rows, columns (and row 1 with `headers: true`) | the target spreadsheet (others via `opts.inspect`) |
+| Settings | Name, value, note; `secret: true` values are masked | `opts.settings` |
+| How to stop | Numbered steps | `opts.stopSteps` |
+| Not readable | Items that could not be read (e.g. missing scope) and the error type | — |
+
+### opts
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `spreadsheetId` / `spreadsheet` | active spreadsheet | Where to write. |
+| `sheetName` | `引き継ぎ書` | Sheet name. |
+| `scopes` | — | `[{scope, reason}]`, the same list as `oauthScopes` in `appsscript.json`, with reasons. |
+| `settings` | — | `[{name, value, note?, secret?}]`. |
+| `stopSteps` | — | Steps to stop (array of strings). |
+| `inspect` | the target | Spreadsheets (objects or IDs) whose structure to list. |
+| `headers` | `false` | Also write row 1 of each sheet. Off by default because a sheet whose row 1 is data would put business data into the document. |
+
+`WitGas.handover.collect(opts)` returns the same content as an object without writing.
+
+### Rules
+
+- **The caller writes the scopes**, because GAS cannot read its own `appsscript.json` at run time.
+  They are checked against the scopes GAS reports as authorized: a listed scope that is not authorized shows "いいえ" (no);
+  an authorized scope that is not listed shows "（理由が書かれていない）" (no reason given). If GAS does not report them, it shows "分からない" (unknown).
+- **Only triggers created by the person generating the document are listed** (a rule of `getProjectTriggers()`).
+- Fired one-time triggers (shown as disabled on the Triggers page) are listed as time-driven like the others, because GAS does not report whether a trigger is disabled (on-GAS check, 2026-11-26).
+- The time of time-driven triggers (e.g. daily at 9) cannot be read from GAS; check the Triggers page.
+- The target sheet must be **empty or a previous handover sheet (A1 is "引き継ぎ書")**; any other sheet is left untouched and an error is thrown.
+- The handover sheet itself is not listed in the sheet structure.
+- Column widths are set only when the sheet is created. Values starting with `=`, `+`, `-` or `@` are prefixed with `'`.
+
 ## Permissions (oauthScopes)
 
 `oauthScopes` in `appsscript.json` is set explicitly and kept minimal. Each new part adds its reason here.
 
 | Scope | Part | Reason |
 |-------|------|--------|
+| (no extra) | `WitGas.handover` | Uses `script.scriptapp` to list triggers and `spreadsheets` to write and open other spreadsheets (both listed elsewhere in this table). Without `script.scriptapp`, triggers are reported as not readable. Reading the authorized scopes is expected to need no extra scope (verified by H2) |
 | (no extra) | `WitGas.guard` | Only the scopes of the parts it uses (lock, runlog, notify). With `log: false`, `spreadsheets` is not needed; with `notify: false`, `script.send_mail` is not needed |
 | (none) | `WitGas.lock` | Uses only `LockService` and `console`; expected to need no extra scope (verified by L1) |
 | `https://www.googleapis.com/auth/script.scriptapp` | `WitGas.resume` | Create and delete continuation triggers (`ScriptApp`). Saving the cursor (`PropertiesService`) is expected to need no extra scope (verified by R8) |
@@ -483,6 +551,7 @@ If `runlog` writes only to the spreadsheet the script is bound to (no `spreadshe
   To do it by hand, delete the continuation trigger (one-time trigger for the `handler` function) on the Triggers page,
   and delete `WitGas.resume:<key>` under Project Settings → Script Properties.
   If you delete only the trigger, the next call to `run` continues from the cursor.
+- `WitGas.handover` creates no triggers and no script properties. The handover sheet may be deleted.
 - `WitGas.guard` creates no triggers and no script properties (if it wraps `resume`, follow the `resume` steps above).
 - `WitGas.runlog` and `WitGas.notify` create no triggers and no script properties.
   To stop logging, remove the call; to change recipients, change `opts.to`. A deleted run-log sheet is recreated on the next write.

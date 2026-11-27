@@ -17,6 +17,8 @@ WitGas.resume = (function () {
   var CONTINUE_AFTER_MS = 60 * 1000;
   var PROPERTY_PREFIX = 'WitGas.resume:';
   var STATE_VERSION = 1;
+  // 最初の項目の前に上限に届きそうで、何も処理せずに区切った回がこの数だけ続いたら、エラーにして止める
+  var MAX_STALLS = 3;
   var LOG_PREFIX = '[WitGas.resume] ';
 
   /**
@@ -33,7 +35,8 @@ WitGas.resume = (function () {
    * @param {Object} [opts.properties] 使うプロパティ。省略時は PropertiesService.getScriptProperties()
    * @param {Object} [opts.scriptApp] トリガーを作る相手。省略時は ScriptApp
    * @return {{done: boolean, cursor: number, processed: number, runs: number,
-   *     scheduled: boolean, elapsedMs: number}}
+   *     scheduled: boolean, elapsedMs: number, setupMs: number, stalled: boolean}}
+   *     setupMs は最初の項目に入るまでの時間、stalled は最初の項目の前に区切ったか
    */
   function run(opts) {
     var startedMs = Date.now();
@@ -46,22 +49,36 @@ WitGas.resume = (function () {
     var cursor = saved ? saved.cursor : 0;
     var runs = (saved ? saved.runs : 0) + 1;
     var firstStartedAt = saved ? saved.firstStartedAt : startedMs;
+    var savedStepMs = saved && saved.lastStepMs ? saved.lastStepMs : 0;
+    var stalls = saved && saved.stalls ? saved.stalls : 0;
 
     // この実行を呼んだ（もう動き終わった）トリガーを消す。残すとトリガーが溜まる。
     if (saved && saved.triggerId) {
       deleteTriggerById_(scriptApp, saved.triggerId);
     }
 
+    // 最初の項目に入るまでにかかった時間（2026-11-26 の実機確認で、続きの回が 6 分を越えた件の切り分けのため）
+    var setupMs = Date.now() - startedMs;
+    console.log(LOG_PREFIX + 'start: ' + cfg.key + ' at cursor ' + cursor + ' (runs ' + runs + ', setup ' + setupMs + 'ms)');
+
     var processed = 0;
     var longestStepMs = 0;
     var paused = false;
+    var stalled = false;
     try {
       while (cfg.hasNext(cursor)) {
         var stepStart = Date.now();
-        // 次の 1 件が今までで一番長くかかったとしても上限に収まるときだけ進む。
-        // ただし 1 回の実行で最低 1 件は進める（進まないままトリガーが続くのを防ぐ）。
-        if (processed > 0 && (stepStart - startedMs) + longestStepMs >= cfg.budgetMs) {
+        var elapsed = stepStart - startedMs;
+        // 次の 1 件が、今までで一番長くかかった 1 件と同じだけかかっても上限に収まるときだけ進む。
+        // 最初の 1 件は、前の回の一番長い 1 件の時間で見込む。前の回がないときや、1 件だけで上限を越える処理では、
+        // 必ず 1 件は進める（進まないままトリガーが続くのを防ぐ）。
+        if (processed > 0 && elapsed + longestStepMs >= cfg.budgetMs) {
           paused = true;
+          break;
+        }
+        if (processed === 0 && savedStepMs > 0 && savedStepMs < cfg.budgetMs && elapsed + savedStepMs >= cfg.budgetMs) {
+          paused = true;
+          stalled = true;
           break;
         }
         var ret = cfg.step(cursor);
@@ -73,20 +90,36 @@ WitGas.resume = (function () {
     } catch (e) {
       // 失敗した項目のカーソルを残す。次に run を呼べばそこからやり直す。
       // 失敗したときは続きのトリガーを張らない（同じ失敗を 1 分おきに繰り返さないため）。
-      trySave_(props, propKey, state_(cursor, runs, firstStartedAt, null));
+      trySave_(props, propKey, state_(cursor, runs, firstStartedAt, null, longestStepMs || savedStepMs, 0));
       console.error(LOG_PREFIX + 'failed: ' + cfg.key + ' at cursor ' + cursor + ' (' + errorType_(e) + ')');
       throw e;
     }
 
+    var timing = ', setup ' + setupMs + 'ms, longest step ' + longestStepMs + 'ms';
     if (!paused) {
       props.deleteProperty(propKey);
-      console.log(LOG_PREFIX + 'done: ' + cfg.key + ' (cursor ' + cursor + ', processed ' + processed + ', runs ' + runs + ')');
-      return result_(true, cursor, processed, runs, false, startedMs);
+      console.log(LOG_PREFIX + 'done: ' + cfg.key + ' (cursor ' + cursor + ', processed ' + processed + ', runs ' + runs + timing + ')');
+      return result_(true, cursor, processed, runs, false, startedMs, setupMs, false);
     }
 
-    schedule_(scriptApp, props, propKey, cfg.handler, state_(cursor, runs, firstStartedAt, null));
-    console.log(LOG_PREFIX + 'paused: ' + cfg.key + ' at cursor ' + cursor + ' (processed ' + processed + ', runs ' + runs + ')');
-    return result_(false, cursor, processed, runs, true, startedMs);
+    stalls = stalled ? stalls + 1 : 0;
+    var next = state_(cursor, runs, firstStartedAt, null, longestStepMs || savedStepMs, stalls);
+    if (stalls >= MAX_STALLS) {
+      // 最初の項目の前に毎回上限に届いている。続きを張り続けても進まないので、止めて知らせる。
+      trySave_(props, propKey, next);
+      console.error(LOG_PREFIX + 'stalled: ' + cfg.key + ' at cursor ' + cursor + ' (' + stalls + ' runs without progress' + timing + ')');
+      var err = new Error('WitGas.resume.run: no progress in ' + stalls + ' runs (setup took too long before the first item)');
+      err.name = 'ResumeStallError';
+      throw err;
+    }
+    schedule_(scriptApp, props, propKey, cfg.handler, next);
+    if (stalled) {
+      console.warn(LOG_PREFIX + 'paused before the first item: ' + cfg.key + ' at cursor ' + cursor +
+        ' (runs ' + runs + ', setup ' + setupMs + 'ms, last step ' + savedStepMs + 'ms, stalls ' + stalls + ')');
+    } else {
+      console.log(LOG_PREFIX + 'paused: ' + cfg.key + ' at cursor ' + cursor + ' (processed ' + processed + ', runs ' + runs + timing + ')');
+    }
+    return result_(false, cursor, processed, runs, true, startedMs, setupMs, stalled);
   }
 
   /**
@@ -188,15 +221,20 @@ WitGas.resume = (function () {
       s = null;
     }
     if (!s || s.v !== STATE_VERSION || !isNonNegInt_(s.cursor) || !isNonNegInt_(s.runs) ||
-        typeof s.firstStartedAt !== 'number') {
+        typeof s.firstStartedAt !== 'number' ||
+        (s.lastStepMs !== undefined && !isNonNegInt_(s.lastStepMs)) ||
+        (s.stalls !== undefined && !isNonNegInt_(s.stalls))) {
       // 最初からやり直すと処理済みの項目をもう一度処理してしまうので、止めて知らせる。
       throw new Error('WitGas.resume: saved state is unreadable (use WitGas.resume.cleanup(key) to start over)');
     }
     return s;
   }
 
-  function state_(cursor, runs, firstStartedAt, triggerId) {
-    return { v: STATE_VERSION, cursor: cursor, runs: runs, firstStartedAt: firstStartedAt, triggerId: triggerId };
+  function state_(cursor, runs, firstStartedAt, triggerId, lastStepMs, stalls) {
+    return {
+      v: STATE_VERSION, cursor: cursor, runs: runs, firstStartedAt: firstStartedAt, triggerId: triggerId,
+      lastStepMs: lastStepMs || 0, stalls: stalls || 0
+    };
   }
 
   function trySave_(props, propKey, state) {
@@ -218,14 +256,16 @@ WitGas.resume = (function () {
     return ret;
   }
 
-  function result_(done, cursor, processed, runs, scheduled, startedMs) {
+  function result_(done, cursor, processed, runs, scheduled, startedMs, setupMs, stalled) {
     return {
       done: done,
       cursor: cursor,
       processed: processed,
       runs: runs,
       scheduled: scheduled,
-      elapsedMs: Date.now() - startedMs
+      elapsedMs: Date.now() - startedMs,
+      setupMs: setupMs,
+      stalled: stalled
     };
   }
 
@@ -295,6 +335,7 @@ WitGas.resume = (function () {
     cleanup: cleanup,
     DEFAULT_BUDGET_MS: DEFAULT_BUDGET_MS,
     MAX_BUDGET_MS: MAX_BUDGET_MS,
+    MAX_STALLS: MAX_STALLS,
     CONTINUE_AFTER_MS: CONTINUE_AFTER_MS,
     PROPERTY_PREFIX: PROPERTY_PREFIX
   };

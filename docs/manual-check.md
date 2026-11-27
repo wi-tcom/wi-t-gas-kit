@@ -7,7 +7,7 @@ Node のテストは GAS のサービスを偽物に差し替えて動かして�
 ## 準備
 
 1. 確認用の新しいスプレッドシートを作り、「拡張機能 → Apps Script」を開く。
-2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`・`reconcile.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
+2. `src/` の各ファイル（`lock.js`・`resume.js`・`runlog.js`・`notify.js`・`guard.js`・`reconcile.js`・`handover.js`）の中身を、スクリプトエディタの同じ名前の `.gs` ファイルに貼る。
 3. 「プロジェクトの設定 → 『appsscript.json』マニフェスト ファイルをエディタで表示する」をオンにし、
    `appsscript.json` を本リポジトリのものに置き換える。
 4. 次の確認用の関数を別ファイル `check.gs` に貼る。
@@ -246,6 +246,36 @@ function checkReconcile_large() {
 }
 ```
 
+## 確認用の関数（handover）
+
+`checkHandover.gs` に貼ります。確認用のスプレッドシート（スクリプトが付いたもの）に書きます。
+
+```js
+function checkHandover() {
+  PropertiesService.getScriptProperties().setProperty('確認_秘密', 'ここは書かれない');
+  var res = WitGas.handover.write({
+    scopes: [
+      { scope: 'https://www.googleapis.com/auth/script.scriptapp', reason: '確認：トリガー' },
+      { scope: 'https://www.googleapis.com/auth/spreadsheets', reason: '確認：書き込み' },
+      { scope: 'https://www.googleapis.com/auth/script.send_mail', reason: '確認：メール' }
+    ],
+    settings: [{ name: '確認_公開', value: 'ok' }, { name: '確認_伏せる', value: 'ここも書かれない', secret: true }],
+    stopSteps: ['確認の手順 1', '確認の手順 2']
+  });
+  console.log(JSON.stringify(res));
+}
+
+function checkHandover_authInfo() {
+  // H2：承認済みの権限を GAS が返すか
+  var info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+  console.log(typeof info.getAuthorizedScopes === 'function' ? JSON.stringify(info.getAuthorizedScopes()) : 'getAuthorizedScopes なし');
+}
+
+function checkHandover_refuse() {
+  WitGas.handover.write({ sheetName: '会計' });
+}
+```
+
 ## 確認する項目
 
 ### lock
@@ -273,6 +303,7 @@ function checkReconcile_large() {
 | R6 | `checkResume` を実行し、続きが動く前に `checkResume_cleanup` を実行 | `{"deletedTrigger":true,"deletedState":true}`。トリガーもプロパティも消え、そのあと続きは動かない |
 | R7 | ライブラリとして追加し（識別子 `WitGasLib`）、R1〜R3 を実行 | 続きのトリガーとプロパティが、呼び出し側のプロジェクトにできるか、ライブラリ側にできるかを記録する |
 | R8 | R1 の承認のあと、`oauthScopes` に `script.scriptapp` だけがある状態で R1〜R3 が動く | プロパティの保存で権限のエラーが出ない |
+| R9 | トリガーの画面で時間主導型のトリガーを 2〜3 個足し（1 回だけのトリガーを動かして「無効」にしたものも含める）、`checkResume` を実行して 15 分ほど待つ | 各回のログの `[WitGas.resume] start: ... (setup …ms)` と、`paused` / `done` の `longest step …ms` を記録する。2026-11-26 に続きの回が 6 分を越えた件で、遅れが「最初の項目の前」か「項目の中」かを切り分ける |
 
 ### runlog
 
@@ -344,6 +375,17 @@ INV-004,ﾐﾎﾝｹﾝｾﾂ,"200,000",2026/1/8
 INV-005,ﾚｲｼﾞﾃﾞﾝｷ,"88,000",2026/1/9
 INV-006,ﾌﾒｲ,"10,000",2026/1/9
 ```
+
+### handover
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| H1 | トリガーの画面で、何か 1 つ時間主導型のトリガーを作ってから `checkHandover` を実行 | 「引き継ぎ書」シートができる。頭にスクリプト ID とタイムゾーン、「トリガー」にそのトリガー（関数・時間主導型・CLOCK・ID）、「止め方」に 1・2 の番号つきの手順 |
+| H2 | `checkHandover_authInfo` を実行し、H1 の「権限」を見る | ログに承認済みの権限の一覧が出るか（`getAuthorizedScopes なし` なら、「承認済み」はすべて「分からない」になる）。一覧が出るときは、承認した 3 つが「はい」になる。追加の権限を求められないこと |
+| H3 | H1 の「スクリプトのプロパティ」と「設定値」を見る | `確認_秘密` のキーはあり、「ここは書かれない」「ここも書かれない」はシートのどこにもない（設定値は「（伏せる）」） |
+| H4 | `checkResume` の 1 回目のあと（続きが動く前）に `checkHandover` を実行 | 「トリガー」の続きのトリガーに「WitGas.resume の続き（確認）」、「スクリプトのプロパティ」の `WitGas.resume:確認` に cursor と runs が出る |
+| H5 | `checkHandover_refuse` を実行 | `not a handover sheet` のエラーになり、「会計」シートは消えていない |
+| H6 | `oauthScopes` から `script.scriptapp` を外して `checkHandover` を実行（終わったら戻す） | 止まらずに書き終わり、「トリガー」は「（読めなかった）」、「読めなかったもの」にエラー種別が出る |
 
 ## 結果の記録
 
@@ -422,9 +464,33 @@ INV-006,ﾌﾒｲ,"10,000",2026/1/9
 
 **分かったこと**：タイムゾーンが `Asia/Tokyo` に切り替わるきっかけは、シートの編集のほかに、スクリプトを付けることもある。ずれるのは、別のスプレッドシートを記録先にして `spreadsheetId` で書き、そのスプレッドシートを作ったまま一度も編集していないとき（README に書いた）。
 
+### 2026-11-26 夜（対象：PR #7 の `a6e86e0`、handover）
+
+- 環境：確認用プロジェクト（スクリプトが付いたスプレッドシート）。`src/` の 7 ファイルと確認用の関数を 1 つのファイルにまとめた。`appsscript.json` は main のもの（権限 3 つ）。
+- 準備：「会計」シート（見出し＋1 行）と、毎日 3 時の時間主導型トリガーを足した。前回の動き終わった 1 回だけのトリガー 2 つ（「無効」）も残っていた。
+
+| # | 結果 | メモ |
+|---|------|------|
+| H1 | 合格 | `{"sheetName":"引き継ぎ書","rows":35,"notes":[]}`。頭にスクリプト ID と `Asia/Tokyo`。「トリガー」に 3 行、「止め方」に 1・2 |
+| H2 | 合格 | `getAuthorizedScopes()` は承認済みの 3 つを返した。「承認済み」は 3 つとも「はい」。追加の権限は求められなかった |
+| H3 | 合格 | プロパティはキーだけで「（値は伏せる）」。設定値の secret は「（伏せる）」。伏せた値はシートのどこにもない |
+| H4 | 合格 | 続きのトリガーに「WitGas.resume の続き（確認）」、`WitGas.resume:確認` に「cursor 4、runs 1、続きのトリガーあり」 |
+| H5 | 合格 | `not a handover sheet` のエラー。「会計」の中身はそのまま |
+| H6 | 合格 | `script.scriptapp` を外しても止まらずに書き終わった。「トリガー」は「（読めなかった）」、「読めなかったもの」に `トリガー：読めなかった（Exception）`、「権限」の `script.scriptapp` は「いいえ」。戻したあとは承認画面なしでトリガーも読めた |
+| R6 | 合格 | 続きが動く前に `checkResume_cleanup` → `{"deletedTrigger":true,"deletedState":true}` |
+
+**気づいたこと**
+
+1. **続きの回が 6 分を越えた（392.8 秒）**：H4 のための `checkResume` の続きの回で、`elapsedMs` が 389876、処理したのは 1 件だけだった。前日の同じ確認（243.6 秒・123.6 秒）では起きていない。今回はプロジェクトのトリガーが 4 つ（うち 2 つは「無効」）あった点が違う。
+   - いまのログでは、遅れたのが「最初の項目の前」か「その項目（`Utilities.sleep(60 秒)`）の中」かを区別できない（項目のログは待ったあとに出るため）。原因は分かっていない。
+   - **直したこと**：(a) どの回も最初に準備にかかった時間（`setup …ms`）を、区切りと完了のときに一番長い 1 件の時間（`longest step …ms`）をログに出す。(b) 前の回の一番長い 1 件の時間を覚えておき、最初の項目の前で上限に届きそうなら処理せずに続きを張る。3 回続いたら `ResumeStallError` で止めて知らせる。
+   - (c) 前回の続きのトリガーを消す時機を後ろにずらす案は、R9 で原因が分かってから決める。
+2. **動き終わった 1 回だけのトリガー**：引き継ぎ書の「トリガー」に、「無効」になったものもほかと同じ「時間主導型」で並ぶ。GAS から無効かどうかを読めないため、引き継ぎ書の注記と README に書いた。
+
 ### 次に確かめること
 
 - 未確認の項目：L1・L7・L8・R6・R7・R8・W5・W7・N4・E6。権限の部分は、部品ごとに別のプロジェクトに分けて確かめる。
+- R9（続きの回の遅れの切り分け）。直した resume の動き（最初の項目の前で区切る）は、遅れが再び起きたときに確かめる。
 - 直したところは、すべて確かめた（W9・C6・E7・E8）。E7 のメール（件名 `[WitGas] 失敗: CSV照合 (CsvFormatError)`）はオーナーが受信を確かめる。
 
 © 2026 株式会社wi-t.com
