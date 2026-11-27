@@ -276,6 +276,72 @@ function checkHandover_refuse() {
 }
 ```
 
+## 見本 A（帳票 PDF）の前の下調べ：P0
+
+見本 A の PDF の作り方を決めるための下調べです。部品は使いません。
+**新しいスプレッドシート**を作って「拡張機能 → Apps Script」を開き、次のコードを `probe.gs` に貼ります。
+
+```js
+var PROBE_HTML = '<html><head><meta charset="utf-8"><style>' +
+  'body{font-family:sans-serif;font-size:11pt;} h1{font-size:20pt;text-align:center;}' +
+  'table{border-collapse:collapse;width:100%;} th,td{border:1px solid #333;padding:4px 8px;} td.n{text-align:right;}' +
+  '</style></head><body>' +
+  '<h1>お見積書</h1><p>見本商事株式会社 御中</p><p>見積番号：Q-0001　日付：2026年11月27日</p>' +
+  '<table><tr><th>品名</th><th>数量</th><th>単価</th><th>金額</th></tr>' +
+  '<tr><td>ボールペン（黒）・ノート Ａ４</td><td class="n">10</td><td class="n">¥120</td><td class="n">¥1,200</td></tr></table>' +
+  '<p>合計：¥1,320（税込）　有効期限：発行日から 30 日</p></body></html>';
+
+function probeHtmlPdf() {
+  var folder = DriveApp.createFolder('wi-t-gas-kit 確認 PDF（HTML）');
+  var times = [];
+  for (var i = 1; i <= 5; i++) {
+    var t0 = Date.now();
+    var pdf = Utilities.newBlob(PROBE_HTML, 'text/html', 'q.html').getAs('application/pdf').setName('確認_HTML_' + i + '.pdf');
+    folder.createFile(pdf);
+    times.push(Date.now() - t0);
+  }
+  console.log(JSON.stringify({ folder: folder.getUrl(), ms: times }));
+}
+
+function probeDocPdf() {
+  var folder = DriveApp.createFolder('wi-t-gas-kit 確認 PDF（ドキュメント）');
+  var times = [];
+  for (var i = 1; i <= 5; i++) {
+    var t0 = Date.now();
+    var doc = DocumentApp.create('確認_ひな形_' + i);
+    var body = doc.getBody();
+    body.appendParagraph('お見積書').setHeading(DocumentApp.ParagraphHeading.HEADING1)
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    body.appendParagraph('見本商事株式会社 御中');
+    body.appendParagraph('見積番号：Q-0001　日付：2026年11月27日');
+    body.appendTable([['品名', '数量', '単価', '金額'], ['ボールペン（黒）・ノート Ａ４', '10', '¥120', '¥1,200']]);
+    body.appendParagraph('合計：¥1,320（税込）　有効期限：発行日から 30 日');
+    doc.saveAndClose();
+    var file = DriveApp.getFileById(doc.getId());
+    folder.createFile(file.getAs('application/pdf').setName('確認_ドキュメント_' + i + '.pdf'));
+    file.setTrashed(true);
+    times.push(Date.now() - t0);
+  }
+  console.log(JSON.stringify({ folder: folder.getUrl(), ms: times }));
+}
+
+function probeSameName() {
+  // drive.file で、同じ名前のファイルがあるかを確かめられるか
+  var it = DriveApp.getFoldersByName('wi-t-gas-kit 確認 PDF（HTML）');
+  var folder = it.hasNext() ? it.next() : null;
+  console.log(folder ? 'folder found / files named 確認_HTML_1.pdf: ' + folder.getFilesByName('確認_HTML_1.pdf').hasNext() : 'folder not found');
+}
+```
+
+| # | 手順 | 記録すること |
+|---|------|--------------|
+| P0-1 | `appsscript.json` の `oauthScopes` を `["https://www.googleapis.com/auth/drive.file"]` だけにして `probeHtmlPdf` を実行 | 承認画面の権限。動いたか（権限のエラーが出ないか）。フォルダに 5 つの PDF。開いて、日本語・表の罫線・右寄せ・全角の字が崩れていないか（画面の写しがあるとよい）。ログの `ms`（1 件ずつの時間） |
+| P0-2 | 同じ `drive.file` だけで `probeSameName` を実行 | `folder found / files named ...: true` になるか（スクリプトが作ったフォルダとファイルを、名前で探せるか） |
+| P0-3 | `oauthScopes` に `https://www.googleapis.com/auth/documents` を足して `probeDocPdf` を実行 | 承認画面の権限。動いたか。PDF の体裁（P0-1 と比べて）。ひな形のドキュメントがゴミ箱に入ったか。ログの `ms` |
+| P0-4 | 終わったら、作った 2 つのフォルダを消す | — |
+
+この結果で、見本 A の作り方と権限を決めます（体裁が崩れなければ、権限の一番狭い HTML の方法にする）。
+
 ## 確認する項目
 
 ### lock
