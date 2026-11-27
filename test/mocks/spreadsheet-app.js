@@ -83,6 +83,11 @@ function createSheet(name) {
         setFontWeight(w) {
           meta.fontWeights.push({ row, col, numRows, numCols, w });
           return range;
+        },
+        setDataValidation(rule) {
+          meta.validations = meta.validations || [];
+          meta.validations.push({ row, col, numRows, numCols, rule });
+          return range;
         }
       };
       return range;
@@ -185,6 +190,18 @@ function createSpreadsheetApp() {
     getActiveSpreadsheet() {
       calls.push({ method: 'getActiveSpreadsheet' });
       return active;
+    },
+    flush() {
+      calls.push({ method: 'flush' });
+    },
+    newDataValidation() {
+      const rule = { list: null, allowInvalid: true };
+      const b = {
+        requireValueInList(list, showDropdown) { rule.list = list.slice(); rule.dropdown = showDropdown !== false; return b; },
+        setAllowInvalid(v) { rule.allowInvalid = v; return b; },
+        build() { return rule; }
+      };
+      return b;
     },
     // --- テスト用 ---
     addSpreadsheet(id, options) {
