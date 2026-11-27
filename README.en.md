@@ -16,6 +16,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | `WitGas.resume` | Split work before the 6-minute limit and continue | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.runlog` / `WitGas.notify` | Run log and failure notification | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.guard` | One-line wrapper combining the above | Implemented (partly verified on GAS; see [results](docs/manual-check.md), Japanese) |
+| `WitGas.settings` / `WitGas.migrate` | Settings sheet / data shape migration | Implemented (Node tests only; not yet verified on GAS) |
 | `WitGas.handover` | Write a handover document to a sheet | Implemented (verified on GAS: H1–H6 passed; see [results](docs/manual-check.md), Japanese) |
 | `WitGas.reconcile` | Match two tables by key | Implemented (partly verified on GAS through the CSV example and C6; C1–C5 not yet; see [results](docs/manual-check.md), Japanese) |
 
@@ -24,6 +25,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | Example | Description | Status |
 |---------|-------------|--------|
 | [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (partly verified on GAS: E1–E5, E7, E8 passed; E6 not yet; see [results](docs/manual-check.md), Japanese) |
+| [Batch PDF documents](examples/pdf-batch/README.en.md) | One quotation PDF per row into a folder the script creates; resumable, settings sheet, upgrade steps (version 1.0.0) | Implemented (Node tests only; not yet verified on GAS; probe P0 done) |
 
 ## Installation
 
@@ -222,14 +224,14 @@ function makeInvoices() {   // called by the daily trigger and by the continuati
 
 ### How it splits
 
-- The continuation trigger is set for 1 minute later, but in the on-GAS check (2026-11-25) it ran **about 87–94 seconds** after pausing.
+- The continuation trigger is set for 1 minute later, but in the on-GAS checks (2026-11-25 and 27) it ran **about 65–94 seconds** after pausing.
   Total time is roughly (time per run, up to 4.5 min, + about 1.5 min wait) × runs. For example, 10 items of 1 minute each took 3 runs and about 13 minutes.
 
 - It moves on to the next item only if that item would still fit in the budget even if it took as long as the longest item so far in this execution.
 - Time is counted from the call to `run`. If you do slow setup before it, lower `budgetMs` accordingly.
 - The first item is estimated with the longest item of the previous run. If most of the budget is already used before the first item (reading the saved progress, deleting the fired trigger), the run processes nothing and schedules the continuation (`stalled: true`, count 0).
   After **3 such runs in a row**, it throws `ResumeStallError` instead of scheduling again, so a job never keeps rescheduling without progress. The cursor is kept; call `run` after fixing the cause.
-  This was added after a continuation run exceeded 6 minutes (392.8 s) in the on-GAS check on 2026-11-26. The cause is not known yet, so every run logs `[WitGas.resume] start: ... (setup …ms)` first and `longest step …ms` when pausing or finishing.
+  This was added after a continuation run exceeded 6 minutes (392.8 s) in the on-GAS check on 2026-11-26. A re-check on 2026-11-27 under the same conditions (3 triggers, 2 of them fired) did not reproduce it; setup took 297–330 ms. The cause is not known, so every run logs `[WitGas.resume] start: ... (setup …ms)` first and `longest step …ms` when pausing or finishing.
 - On the first run, and when a single item is longer than the budget, at least one item is processed.
   Still, split `step` if a single item could exceed the 6-minute limit.
 
@@ -494,6 +496,7 @@ function writeHandover() {   // run from the script editor
 | Section | Content | Source |
 |---------|---------|--------|
 | (top) | Generated at, script ID, time zone | GAS |
+| Versions | Example/deliverable name and version, kit version, version of each part (marked if it differs from the kit), schema versions | `opts.app`, each part's `VERSION`, `WitGas.schema:*` |
 | Triggers | Function, type (time-driven, on open, ...), source, ID; `WitGas.resume` continuation triggers are marked | `ScriptApp.getProjectTriggers()` |
 | Scopes | Scope, reason, authorized? | `opts.scopes` (written by the caller) checked against the authorized scopes GAS reports |
 | Script properties | Keys only. **Values are never written.** For `WitGas.resume`, the progress (cursor, runs) | `PropertiesService` |
@@ -511,6 +514,7 @@ function writeHandover() {   // run from the script editor
 | `scopes` | — | `[{scope, reason}]`, the same list as `oauthScopes` in `appsscript.json`, with reasons. |
 | `settings` | — | `[{name, value, note?, secret?}]`. |
 | `stopSteps` | — | Steps to stop (array of strings). |
+| `app` | — | `{name, version}` of the example/deliverable (`VERSION` in `main.js`). |
 | `inspect` | the target | Spreadsheets (objects or IDs) whose structure to list. |
 | `headers` | `false` | Also write row 1 of each sheet. Off by default because a sheet whose row 1 is data would put business data into the document. |
 
@@ -528,12 +532,57 @@ function writeHandover() {   // run from the script editor
 - The handover sheet itself is not listed in the sheet structure.
 - Column widths are set only when the sheet is created. Values starting with `=`, `+`, `-` or `@` are prefixed with `'`.
 
+## WitGas.settings — settings sheet
+
+Keeps per-client values (sheet names, recipients, column names, limits) in a "設定" (settings) sheet and reads them from code. Replacing the code does not erase the settings.
+
+```js
+var ITEMS = [
+  { key: '明細のシート', value: '明細', note: 'source table' },
+  { key: '1 回の上限（ミリ秒）', value: 270000, type: 'number' },
+  { key: '失敗の通知先', value: 'ops@example.com', type: 'email', required: true }
+];
+WitGas.settings.ensure({ items: ITEMS });       // create if missing; add missing items only (never overwrite)
+var s = WitGas.settings.read({ items: ITEMS });
+```
+
+- Sheet layout: header row (項目 item, 値 value, 説明 note), then one item per row.
+- `type`: `string` (default), `number`, `boolean` (also はい/いいえ), `email`. `required: true` rejects empty values.
+- Invalid values throw `SettingsError` naming the item only (in Japanese), never the value.
+- Keep secrets (keys) in script properties, not in the sheet.
+
+## WitGas.migrate — data shape migration
+
+Runs ordered "steps" when an upgrade changes sheets or columns. The current shape (schema version) is kept in script property `WitGas.schema:<key>`.
+
+```js
+var STEPS = [
+  { version: 1, name: 'create settings and record sheets', run: function () { /* create if missing */ } },
+  { version: 2, name: 'add a column', run: function () { /* add if missing */ } }
+];
+WitGas.migrate.run({ key: 'pdfBatch', steps: STEPS });  // → { from, to, ran }
+WitGas.migrate.needed({ key: 'pdfBatch', steps: STEPS });
+```
+
+- Only steps newer than the saved version run, in order; the version is saved after each step. Calling it again does nothing.
+- Write steps so running them twice gives the same result. After a failure, the version so far is kept; fix and call again.
+- If the data is newer than the code (after rolling back), it throws without touching anything.
+- Wrap the call in `WitGas.guard`.
+
+## Part versions
+
+- The kit version is `WitGas.version` (now `0.2.0`); every part has the same `VERSION` (`WitGas.lock.VERSION`, ...).
+- Upgrade by replacing the files in `src/`; do not edit parts by hand (client-specific changes go in the example's `main.js`).
+- The handover document lists the parts and versions and marks any part whose version differs from the kit.
+- Rationale: [docs/design/versioning.md](docs/design/versioning.md) (Japanese).
+
 ## Permissions (oauthScopes)
 
 `oauthScopes` in `appsscript.json` is set explicitly and kept minimal. Each new part adds its reason here.
 
 | Scope | Part | Reason |
 |-------|------|--------|
+| (no extra) | `WitGas.settings`, `WitGas.migrate` | The settings sheet is in the active spreadsheet (`spreadsheets.currentonly` is expected to suffice); schema versions are script properties |
 | (no extra) | `WitGas.handover` | Uses `script.scriptapp` to list triggers and `spreadsheets` to write and open other spreadsheets (both listed elsewhere in this table). Without `script.scriptapp`, triggers are reported as not readable. Reading the authorized scopes is expected to need no extra scope (verified by H2) |
 | (no extra) | `WitGas.guard` | Only the scopes of the parts it uses (lock, runlog, notify). With `log: false`, `spreadsheets` is not needed; with `notify: false`, `script.send_mail` is not needed |
 | (none) | `WitGas.lock` | Uses only `LockService` and `console`; expected to need no extra scope (verified by L1) |

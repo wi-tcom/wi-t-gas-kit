@@ -233,5 +233,6 @@ WitGas.guard = (function () {
     return typeof n === 'number' && isFinite(n) && n >= 0 && Math.floor(n) === n;
   }
 
+  guard.VERSION = '0.2.0';
   return guard;
 })();

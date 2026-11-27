@@ -276,6 +276,77 @@ function checkHandover_refuse() {
 }
 ```
 
+## 見本 A（帳票 PDF）の前の下調べ：P0
+
+見本 A の PDF の作り方を決めるための下調べです。部品は使いません。
+**新しいスプレッドシート**を作って「拡張機能 → Apps Script」を開き、次のコードを `probe.gs` に貼ります。
+
+```js
+var PROBE_HTML = '<html><head><meta charset="utf-8"><style>' +
+  'body{font-family:sans-serif;font-size:11pt;} h1{font-size:20pt;text-align:center;}' +
+  'table{border-collapse:collapse;width:100%;} th,td{border:1px solid #333;padding:4px 8px;} td.n{text-align:right;}' +
+  '</style></head><body>' +
+  '<h1>お見積書</h1><p>見本商事株式会社 御中</p><p>見積番号：Q-0001　日付：2026年11月27日</p>' +
+  '<table><tr><th>品名</th><th>数量</th><th>単価</th><th>金額</th></tr>' +
+  '<tr><td>ボールペン（黒）・ノート Ａ４</td><td class="n">10</td><td class="n">¥120</td><td class="n">¥1,200</td></tr></table>' +
+  '<p>合計：¥1,320（税込）　有効期限：発行日から 30 日</p></body></html>';
+
+function probeHtmlPdf() {
+  var folder = DriveApp.createFolder('wi-t-gas-kit 確認 PDF（HTML）');
+  var times = [];
+  for (var i = 1; i <= 5; i++) {
+    var t0 = Date.now();
+    var pdf = Utilities.newBlob(PROBE_HTML, 'text/html', 'q.html').getAs('application/pdf').setName('確認_HTML_' + i + '.pdf');
+    folder.createFile(pdf);
+    times.push(Date.now() - t0);
+  }
+  console.log(JSON.stringify({ folder: folder.getUrl(), ms: times }));
+}
+
+function probeDocPdf() {
+  var folder = DriveApp.createFolder('wi-t-gas-kit 確認 PDF（ドキュメント）');
+  var times = [];
+  for (var i = 1; i <= 5; i++) {
+    var t0 = Date.now();
+    var doc = DocumentApp.create('確認_ひな形_' + i);
+    var body = doc.getBody();
+    body.appendParagraph('お見積書').setHeading(DocumentApp.ParagraphHeading.HEADING1)
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    body.appendParagraph('見本商事株式会社 御中');
+    body.appendParagraph('見積番号：Q-0001　日付：2026年11月27日');
+    body.appendTable([['品名', '数量', '単価', '金額'], ['ボールペン（黒）・ノート Ａ４', '10', '¥120', '¥1,200']]);
+    body.appendParagraph('合計：¥1,320（税込）　有効期限：発行日から 30 日');
+    doc.saveAndClose();
+    var file = DriveApp.getFileById(doc.getId());
+    folder.createFile(file.getAs('application/pdf').setName('確認_ドキュメント_' + i + '.pdf'));
+    file.setTrashed(true);
+    times.push(Date.now() - t0);
+  }
+  console.log(JSON.stringify({ folder: folder.getUrl(), ms: times }));
+}
+
+function probeSameName() {
+  // drive.file で、同じ名前のファイルがあるかを確かめられるか
+  var it = DriveApp.getFoldersByName('wi-t-gas-kit 確認 PDF（HTML）');
+  var folder = it.hasNext() ? it.next() : null;
+  console.log(folder ? 'folder found / files named 確認_HTML_1.pdf: ' + folder.getFilesByName('確認_HTML_1.pdf').hasNext() : 'folder not found');
+}
+```
+
+| # | 手順 | 記録すること |
+|---|------|--------------|
+| P0-1 | `appsscript.json` の `oauthScopes` を `["https://www.googleapis.com/auth/drive.file"]` だけにして `probeHtmlPdf` を実行 | 承認画面の権限。動いたか（権限のエラーが出ないか）。フォルダに 5 つの PDF。開いて、日本語・表の罫線・右寄せ・全角の字が崩れていないか（画面の写しがあるとよい）。ログの `ms`（1 件ずつの時間） |
+| P0-2 | 同じ `drive.file` だけで `probeSameName` を実行 | `folder found / files named ...: true` になるか（スクリプトが作ったフォルダとファイルを、名前で探せるか） |
+| P0-3 | `oauthScopes` に `https://www.googleapis.com/auth/documents` を足して `probeDocPdf` を実行 | 承認画面の権限。動いたか。PDF の体裁（P0-1 と比べて）。ひな形のドキュメントがゴミ箱に入ったか。ログの `ms` |
+| P0-4 | 終わったら、作った 2 つのフォルダを消す | — |
+
+この結果で、見本 A の作り方と権限を決めます（体裁が崩れなければ、権限の一番狭い HTML の方法にする）。
+
+**P0 の結果（2026-11-27）**：`DriveApp` は `drive.file` では使えなかった（P0-1 は `DriveApp.createFolder` で権限のエラー。必要な権限は `drive` と出た）。
+同じ `drive.file` だけで、詳細サービスの Drive API（v3）の `Drive.Files.create` / `Drive.Files.list` に替えると、フォルダと PDF を作れ、名前で探せた。
+HTML から作った PDF の体裁に崩れの指摘はなかった（「シンプル」）。1 件あたり 1314〜1921ms（5 件）。
+→ 見本 A は「HTML → PDF」＋「Drive API（v3）で保存」にした。P0-3（ドキュメントのひな形）は、`DriveApp` を使う手順のため行わなかった。
+
 ## 確認する項目
 
 ### lock
@@ -387,6 +458,23 @@ INV-006,ﾌﾒｲ,"10,000",2026/1/9
 | H5 | `checkHandover_refuse` を実行 | `not a handover sheet` のエラーになり、「会計」シートは消えていない |
 | H6 | `oauthScopes` から `script.scriptapp` を外して `checkHandover` を実行（終わったら戻す） | 止まらずに書き終わり、「トリガー」は「（読めなかった）」、「読めなかったもの」にエラー種別が出る |
 
+### 見本 A：帳票 PDF（pdf-batch）
+
+新しいスプレッドシートに、`examples/pdf-batch/README.md` の「入れ方」で入れてから確かめます（`appsscript.json` は見本のもの。詳細サービス Drive API v3 を足す）。
+
+| # | 手順 | 期待する結果 |
+|---|------|--------------|
+| A1 | 開き直して、メニュー「帳票 → 設定と表を用意する」 | 承認画面の権限が 5 つ（このスプレッドシート・スクリプトが作ったドライブのファイル・トリガー・メール送信・画面の表示）。「設定」シート（14 項目）と「作成記録」シートができる。「設定と表を用意しました（スキーマの版 0 → 1）」 |
+| A2 | 「設定」の「失敗の通知先」を受け取れるアドレスにし、「見本のデータを入れる」→「PDF を作る」 | 「PDF を 30 件作りました」。ドライブに「見本 お見積書 PDF（wi-t-gas-kit）」フォルダができ、`お見積書_Q-0001.pdf`〜`Q-0030` の 30 ファイル。開いて、日本語・表・右寄せが崩れていない。「作成記録」に 30 行、「実行記録」に「帳票PDF／成功／30」。実行時間を記録する |
+| A3 | もう一度「PDF を作る」 | 「PDF を 0 件作りました（作成済みで飛ばした 30 件）」。フォルダは 30 ファイルのまま |
+| A4 | 「作成記録」の 1 行を消して「PDF を作る」 | PDF は増えない（同じ名前があるので作らない）。「作成記録」は 30 行に戻る |
+| A5 | 「作成記録」を見出しだけにし、フォルダの PDF をすべてゴミ箱に入れ、「設定」の「1 回の上限（ミリ秒）」を `20000` にして「PDF を作る」→ 10 分ほど待つ | 1 回目は「残りは続きで作ります」。続きのトリガーで何回かに分かれて 30 件そろう。どの回も 6 分未満で、ログに `setup` と `longest step` が出る。終わったら `runPdfBatch` のトリガーと進み具合が残らない。「実行記録」は「続きあり」が並び、最後が「成功」、件数の合計が 30 |
+| A6 | 「明細」の E1（単価）を `値段` に変えて「PDF を作る」 | 「「明細」の見出し（1 行目）に「単価」がありません。」の知らせ（英語のエラーは出ない）。「実行記録」に「失敗／SheetFormatError」、メールが 1 通 |
+| A7 | 「設定」の「失敗の通知先」を `abc` にして「PDF を作る」 | 「「設定」シートの「失敗の通知先」の値がメールアドレスになっていません。…」の知らせ。「実行記録」もメールも増えない |
+| A8 | 「点検する」 | 問題がなければ「点検：問題は見つかりませんでした（… 1.0.0、スキーマの版 1）」。A6 の状態なら「値段」がない、と出る |
+| A9 | 「引き継ぎ書を作る」 | 「版」に「帳票 PDF の一括作成（pdf-batch） 1.0.0」と部品集 0.2.0・部品 9 つ・スキーマの版 1。「権限」の 5 つが「はい」。「設定値」に設定シートの値、「止め方」に 4 つ |
+| A10 | 版上げの練習：A2 のあと、`main.js` の `PDF_BATCH_STEPS` に段 2（作成記録の E1 に「送信日時」を書く。あれば書かない）を足して貼り直し、README の「版上げのしかた」の順にたどる | 「設定と表を用意する」でスキーマの版 1 → 2、作成記録に列が足され、中身と設定シートの値は変わらない。もう一度動かしても変わらない。「点検する」で問題なし。コピーに戻す手順で元に戻せる |
+
 ## 結果の記録
 
 ### 2026-11-25（対象：main 9ec62a6、第1段）
@@ -484,13 +572,30 @@ INV-006,ﾌﾒｲ,"10,000",2026/1/9
 1. **続きの回が 6 分を越えた（392.8 秒）**：H4 のための `checkResume` の続きの回で、`elapsedMs` が 389876、処理したのは 1 件だけだった。前日の同じ確認（243.6 秒・123.6 秒）では起きていない。今回はプロジェクトのトリガーが 4 つ（うち 2 つは「無効」）あった点が違う。
    - いまのログでは、遅れたのが「最初の項目の前」か「その項目（`Utilities.sleep(60 秒)`）の中」かを区別できない（項目のログは待ったあとに出るため）。原因は分かっていない。
    - **直したこと**：(a) どの回も最初に準備にかかった時間（`setup …ms`）を、区切りと完了のときに一番長い 1 件の時間（`longest step …ms`）をログに出す。(b) 前の回の一番長い 1 件の時間を覚えておき、最初の項目の前で上限に届きそうなら処理せずに続きを張る。3 回続いたら `ResumeStallError` で止めて知らせる。
-   - (c) 前回の続きのトリガーを消す時機を後ろにずらす案は、R9 で原因が分かってから決める。
+   - (c) 前回の続きのトリガーを消す時機を後ろにずらす案は、R9 で原因が分かってから決める。→ 2026-11-27 の R9 では再現せず、準備は 297〜330ms だったので、今は見送る（再び起きて `setup` が長ければ考える）。
 2. **動き終わった 1 回だけのトリガー**：引き継ぎ書の「トリガー」に、「無効」になったものもほかと同じ「時間主導型」で並ぶ。GAS から無効かどうかを読めないため、引き継ぎ書の注記と README に書いた。
+
+### 2026-11-27（対象：main `66aad4d`、R9）
+
+- 環境：前回と同じ確認用プロジェクト。`src/` の 7 ファイルと確認用の関数を 1 つのファイルにまとめた。`appsscript.json` は main のもの（権限 3 つ）。
+- 前提：プロジェクトのトリガーは 3 つ（動き終わった「無効」の 1 回だけのもの 2 つと、毎日 3 時のもの 1 つ）。2026-11-26 に 392.8 秒になったときと同じ構成。
+
+| 回 | 起動 | 実行時間 | setup | longest step | 結果 |
+|----|------|----------|-------|--------------|------|
+| 1 | エディタ | 241.4 秒 | 44ms | 60007ms | `paused` cursor 4（4 件） |
+| 2 | 時間主導型 | 241.9 秒 | 297ms | 60005ms | `paused` cursor 8（4 件） |
+| 3 | 時間主導型 | 121.5 秒 | 330ms | 60004ms | `done` cursor 10（2 件） |
+
+| # | 結果 | メモ |
+|---|------|------|
+| R9 | 合格 | 3 回とも 6 分未満。`stalled` はどの回も `false`、`ResumeStallError` は出なかった。ログは手順書のとおり（`start: 確認 at cursor 4 (runs 2, setup 297ms)` など）、返り値に `setupMs`・`stalled` がある。完了後、`checkResume` のトリガーは残っていない。続きのトリガーは区切ってから 65 秒と 94 秒で動いた |
+
+**2026-11-26 の 392.8 秒について**：同じ条件で再現しなかった。続きの回の準備（進み具合の読み出しと、前回のトリガーの削除）は 297ms・330ms だった。前回の約 330 秒の遅れの原因は分からないが、トリガーの数だけが原因ではなさそう。今後同じことが起きたら、ログの `setup` で準備の時間かどうかが分かる。
 
 ### 次に確かめること
 
 - 未確認の項目：L1・L7・L8・R6・R7・R8・W5・W7・N4・E6。権限の部分は、部品ごとに別のプロジェクトに分けて確かめる。
-- R9（続きの回の遅れの切り分け）。直した resume の動き（最初の項目の前で区切る）は、遅れが再び起きたときに確かめる。
+- 直した resume の動き（最初の項目の前で区切る）は、実機ではまだ起こせていない（Node のテストで確認済み）。遅れが再び起きたときに、ログの `setup` とあわせて確かめる。
 - 直したところは、すべて確かめた（W9・C6・E7・E8）。E7 のメール（件名 `[WitGas] 失敗: CSV照合 (CsvFormatError)`）はオーナーが受信を確かめる。
 
 © 2026 株式会社wi-t.com

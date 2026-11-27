@@ -43,7 +43,7 @@ test('「引き継ぎ書」シートに、作成日時・スクリプト ID・�
   assert.equal(v[0][1].getTime(), env.clock.now());
   assert.deepEqual(trim(v.slice(1, 3)), [['スクリプト ID', '1ScriptIdForTests'], ['タイムゾーン', 'Asia/Tokyo']]);
   const titles = v.filter((r) => typeof r[0] === 'string' && r[0].startsWith('■ ')).map((r) => r[0]);
-  assert.deepEqual(titles, ['■ トリガー', '■ 権限', '■ スクリプトのプロパティ', '■ シートの構成', '■ 設定値', '■ 止め方']);
+  assert.deepEqual(titles, ['■ 版', '■ トリガー', '■ 権限', '■ スクリプトのプロパティ', '■ シートの構成', '■ 設定値', '■ 止め方']);
   assert.equal(res.sheetName, '引き継ぎ書');
   assert.equal(res.rows, v.length);
   assert.deepEqual(Array.from(res.notes), []);
@@ -257,4 +257,31 @@ test('guard で包んで作れる（実行記録には件数だけ）', () => {
   }, { log: { spreadsheet: ss }, notify: false });
   assert.equal(res.status, 'success');
   assert.equal(ss.getSheetByName('実行記録').values()[1][3], '成功');
+});
+
+test('版：見本の名前と版、部品集の版、入っている部品ごとの版、スキーマの版を書く', () => {
+  const { env, section } = setup();
+  env.PropertiesService.getScriptProperties().setProperty('WitGas.schema:pdfBatch', '2');
+  env.WitGas.handover.write({ app: { name: '帳票 PDF', version: '1.2.0' } });
+  const rows = trim(section('版'));
+  assert.deepEqual(rows[0], ['名前', '版', '備考']);
+  assert.deepEqual(rows[1], ['帳票 PDF', '1.2.0', '見本・納品物']);
+  assert.deepEqual(rows[2], ['部品集（WitGas.version）', '0.2.0']);
+  const parts = rows.filter((r) => String(r[0]).startsWith('WitGas.'));
+  assert.deepEqual(parts.map((r) => r[0]), [
+    'WitGas.guard', 'WitGas.handover', 'WitGas.lock', 'WitGas.migrate', 'WitGas.notify',
+    'WitGas.reconcile', 'WitGas.resume', 'WitGas.runlog', 'WitGas.settings'
+  ]);
+  assert.ok(parts.every((r) => r[1] === '0.2.0' && r.length === 2), '版がそろっていれば備考は空');
+  assert.deepEqual(rows[rows.length - 1], ['スキーマの版：pdfBatch', '2', 'WitGas.migrate']);
+  assert.deepEqual(trim(section('スクリプトのプロパティ')).slice(1), [['WitGas.schema:pdfBatch', 'スキーマの版（2）']]);
+});
+
+test('版：部品集の版と違う部品には印をつける（ファイルの入れ替え忘れに気づけるように）', () => {
+  const { env, section } = setup();
+  env.WitGas.lock.VERSION = '0.1.0';
+  env.WitGas.handover.write();
+  const row = trim(section('版')).find((r) => r[0] === 'WitGas.lock');
+  assert.deepEqual(row, ['WitGas.lock', '0.1.0', '部品集の版と違う（入れ替え忘れの見込み）']);
+  assert.throws(() => env.WitGas.handover.write({ app: { name: 'x' } }), /opts\.app must be \{name, version\}/);
 });
