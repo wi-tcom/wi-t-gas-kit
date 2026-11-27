@@ -15,6 +15,7 @@ const { createSpreadsheetApp } = require('../mocks/spreadsheet-app');
 const { createMailApp } = require('../mocks/mail-app');
 const { createCacheService } = require('../mocks/cache-service');
 const { createUtilities, createSession } = require('../mocks/utilities');
+const { createDriveApp } = require('../mocks/drive-app');
 
 const SRC_DIR = path.join(__dirname, '..', '..', 'src');
 
@@ -48,6 +49,7 @@ function createGasEnv(options) {
   const CacheService = createCacheService(clock);
   const Utilities = createUtilities();
   const Session = createSession(opts.timeZone);
+  const DriveApp = createDriveApp();
 
   const sandbox = {
     console,
@@ -59,7 +61,8 @@ function createGasEnv(options) {
     MailApp,
     CacheService,
     Utilities,
-    Session
+    Session,
+    DriveApp
   };
   const context = vm.createContext(sandbox);
   const baseKeys = new Set(Object.keys(sandbox));
@@ -87,6 +90,7 @@ function createGasEnv(options) {
     SpreadsheetApp,
     MailApp,
     CacheService,
+    DriveApp,
     /** 次に動くトリガーを発火させる（時計もその時刻まで進む） */
     fireNext() {
       LockService.newExecution(); // トリガーで動くのは別の実行
