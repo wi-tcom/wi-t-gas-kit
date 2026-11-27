@@ -24,7 +24,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 
 | Example | Description | Status |
 |---------|-------------|--------|
-| [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (partly verified on GAS: E1–E5, E7, E8 passed; E6 not yet; see [results](docs/manual-check.md), Japanese) |
+| [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu); settings sheet and upgrade steps (version 1.0.0) | Implemented (partly verified on GAS: E1–E5, E7, E8 passed; E6 not yet; see [results](docs/manual-check.md), Japanese) |
 | [Batch PDF documents](examples/pdf-batch/README.en.md) | One quotation PDF per row into a folder the script creates; resumable, settings sheet, upgrade steps (version 1.0.0) | Implemented (Node tests only; not yet verified on GAS; probe P0 done) |
 
 ## Installation
@@ -515,6 +515,7 @@ function writeHandover() {   // run from the script editor
 | `settings` | — | `[{name, value, note?, secret?}]`. |
 | `stopSteps` | — | Steps to stop (array of strings). |
 | `app` | — | `{name, version}` of the example/deliverable (`VERSION` in `main.js`). |
+| `triggers` | `true` | `false` skips reading triggers and says so; for examples that use no triggers and lack `script.scriptapp` (kit 0.3.0+). |
 | `inspect` | the target | Spreadsheets (objects or IDs) whose structure to list. |
 | `headers` | `false` | Also write row 1 of each sheet. Off by default because a sheet whose row 1 is data would put business data into the document. |
 
@@ -571,7 +572,7 @@ WitGas.migrate.needed({ key: 'pdfBatch', steps: STEPS });
 
 ## Part versions
 
-- The kit version is `WitGas.version` (now `0.2.0`); every part has the same `VERSION` (`WitGas.lock.VERSION`, ...).
+- The kit version is `WitGas.version` (now `0.3.0`); every part has the same `VERSION` (`WitGas.lock.VERSION`, ...).
 - Upgrade by replacing the files in `src/`; do not edit parts by hand (client-specific changes go in the example's `main.js`).
 - The handover document lists the parts and versions and marks any part whose version differs from the kit.
 - Rationale: [docs/design/versioning.md](docs/design/versioning.md) (Japanese).

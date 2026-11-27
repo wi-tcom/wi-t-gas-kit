@@ -266,13 +266,14 @@ test('版：見本の名前と版、部品集の版、入っている部品ご�
   const rows = trim(section('版'));
   assert.deepEqual(rows[0], ['名前', '版', '備考']);
   assert.deepEqual(rows[1], ['帳票 PDF', '1.2.0', '見本・納品物']);
-  assert.deepEqual(rows[2], ['部品集（WitGas.version）', '0.2.0']);
+  const kit = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'package.json'), 'utf8')).version;
+  assert.deepEqual(rows[2], ['部品集（WitGas.version）', kit]);
   const parts = rows.filter((r) => String(r[0]).startsWith('WitGas.'));
   assert.deepEqual(parts.map((r) => r[0]), [
     'WitGas.guard', 'WitGas.handover', 'WitGas.lock', 'WitGas.migrate', 'WitGas.notify',
     'WitGas.reconcile', 'WitGas.resume', 'WitGas.runlog', 'WitGas.settings'
   ]);
-  assert.ok(parts.every((r) => r[1] === '0.2.0' && r.length === 2), '版がそろっていれば備考は空');
+  assert.ok(parts.every((r) => r[1] === kit && r.length === 2), '版がそろっていれば備考は空');
   assert.deepEqual(rows[rows.length - 1], ['スキーマの版：pdfBatch', '2', 'WitGas.migrate']);
   assert.deepEqual(trim(section('スクリプトのプロパティ')).slice(1), [['WitGas.schema:pdfBatch', 'スキーマの版（2）']]);
 });
@@ -284,4 +285,14 @@ test('版：部品集の版と違う部品には印をつける（ファイル�
   const row = trim(section('版')).find((r) => r[0] === 'WitGas.lock');
   assert.deepEqual(row, ['WitGas.lock', '0.1.0', '部品集の版と違う（入れ替え忘れの見込み）']);
   assert.throws(() => env.WitGas.handover.write({ app: { name: 'x' } }), /opts\.app must be \{name, version\}/);
+});
+
+test('triggers: false なら、トリガーの一覧を読まず、出していない理由を書く（読めなかったものにも入れない）', () => {
+  const { env, section } = setup();
+  env.ScriptApp.failNextGetTriggers(new Error('should not be called'));
+  const res = env.WitGas.handover.write({ triggers: false });
+  assert.deepEqual(trim(section('トリガー')).slice(1),
+    [['（出していない：この見本・納品物はトリガーを使わないため、一覧を読む権限を持たない）']]);
+  assert.deepEqual(Array.from(res.notes), []);
+  assert.throws(() => env.WitGas.handover.write({ triggers: 'no' }), /opts\.triggers must be a boolean/);
 });
