@@ -32,8 +32,8 @@ function setup(options) {
   };
   if (!o.noMigrate) env.context.migratePdfBatch();
   env.SpreadsheetApp.ui.alerts.length = 0;
-  const folder = () => env.DriveApp.folders()[0];
-  const pdfs = () => (folder() ? env.DriveApp.filesIn(folder().getId()) : []);
+  const folder = () => env.Drive.folders()[0];
+  const pdfs = () => (folder() ? env.Drive.filesIn(folder().id) : []);
   return { env, ss, values, folder, pdfs, run: () => env.context.runPdfBatch() };
 }
 
@@ -57,16 +57,17 @@ test('見本のデータ 30 件から PDF を 30 件作り、作成記録に 30 
   const res = run();
   assert.equal(res.status, 'success');
   assert.equal(pdfs().length, 30);
-  assert.equal(folder().getName(), '見本 お見積書 PDF（wi-t-gas-kit）');
-  const names = pdfs().map((f) => f.getName());
+  assert.equal(folder().name, '見本 お見積書 PDF（wi-t-gas-kit）');
+  const names = pdfs().map((f) => f.name);
   assert.equal(names[0], 'お見積書_Q-0001.pdf');
   assert.equal(new Set(names).size, 30);
-  assert.equal(pdfs()[0].getMimeType(), 'application/pdf');
+  assert.equal(pdfs()[0].mimeType, 'application/pdf');
+  assert.equal(pdfs()[0].blob.getContentType(), 'application/pdf');
 
   const rec = values('作成記録');
   assert.deepEqual(rec[0], ['見積番号', '作成日時', 'ファイル ID', 'ファイル名']);
   assert.equal(rec.length, 31);
-  assert.equal(rec[1][2], pdfs()[0].getId());
+  assert.equal(rec[1][2], pdfs()[0].id);
 
   const log = values('実行記録');
   assert.deepEqual(log[1].slice(2, 6), ['帳票PDF', '成功', 30, '']);
@@ -81,7 +82,7 @@ test('帳票の中身：題・見積番号・宛先・品名・金額（数量×
   s.appendRow(['見積番号', '宛先', '品名', '数量', '単価', '日付']);
   s.appendRow(['Q-9', '<見本>&商店', 'ノート "A4"', 3, 1200, new env.context.Date(Date.UTC(2026, 11, 4, 15))]);
   run();
-  const html = pdfs()[0].getBlob()._source;
+  const html = pdfs()[0].blob._source;
   assert.match(html, /<h1>お見積書<\/h1>/);
   assert.match(html, /見積番号：Q-9/);
   assert.match(html, /&lt;見本&gt;&amp;商店 御中/);
@@ -113,12 +114,12 @@ test('作成記録の行を消すと、その帳票だけ作り直す（ファ�
   assert.equal(values('作成記録').length, 31, '記録は戻る');
 
   // PDF も消してから記録を消すと、作り直す
-  const f = pdfs().find((x) => x.getName() === 'お見積書_Q-0002.pdf');
-  f.setTrashed(true);
+  const f = pdfs().find((x) => x.name === 'お見積書_Q-0002.pdf');
+  env.Drive.trash(f.id);
   const row = values('作成記録').findIndex((r) => r[0] === 'Q-0002');
   rec.deleteRows(row + 1, 1);
   run();
-  assert.ok(pdfs().some((x) => x.getName() === 'お見積書_Q-0002.pdf'));
+  assert.ok(pdfs().some((x) => x.name === 'お見積書_Q-0002.pdf'));
   assert.equal(pdfs().length, 30);
 });
 
@@ -131,7 +132,7 @@ test('上限を越える前に区切り、続きのトリガーで残りを作�
   assert.ok(firstCount > 0 && firstCount < 30);
   while (env.fireNext().fired) { /* 続きを動かす */ }
   assert.equal(pdfs().length, 30);
-  assert.equal(new Set(pdfs().map((f) => f.getName())).size, 30, '同じ帳票を二度作らない');
+  assert.equal(new Set(pdfs().map((f) => f.name)).size, 30, '同じ帳票を二度作らない');
   assert.equal(env.ScriptApp.getProjectTriggers().length, 0);
   assert.equal(env.PropertiesService.dump()['WitGas.resume:pdfBatch'], undefined);
   const results = values('実行記録').slice(1).map((r) => r[3]);
@@ -144,7 +145,7 @@ test('上限を越える前に区切り、続きのトリガーで残りを作�
 test('作る途中で失敗したら、失敗した帳票から続けられ、二重に作らない', () => {
   const { env, pdfs, run } = setup();
   env.context.setupPdfBatchSample();
-  env.DriveApp.failNextCreateFile(Object.assign(new Error('Drive が混んでいる'), { name: 'Exception' }));
+  env.Drive.failNextCreate(Object.assign(new Error('Drive が混んでいる'), { name: 'Exception' }));
   assert.throws(run, /Drive が混んでいる/);
   assert.equal(pdfs().length, 0);
   assert.equal(env.MailApp.sent.length, 1);
@@ -202,7 +203,8 @@ test('フォルダはスクリプトが作り、2 回目からは同じフォル
   assert.ok(id);
   env.PropertiesService.getScriptProperties().setProperty('PDF_BATCH_FOLDER_ID', 'D-gone');
   const settings = env.context.pdfBatchReadSettings_(env.SpreadsheetApp.getActiveSpreadsheet());
-  assert.equal(env.context.pdfBatchFolder_(settings).getName(), '見本 お見積書 PDF（wi-t-gas-kit）');
+  const newId = env.context.pdfBatchFolder_(settings);
+  assert.equal(env.Drive.Files.get(newId).name, '見本 お見積書 PDF（wi-t-gas-kit）');
   assert.notEqual(env.PropertiesService.dump().PDF_BATCH_FOLDER_ID, 'D-gone');
 });
 
@@ -290,9 +292,9 @@ test('設定シートの値で、題・発行元・列名・フォルダ名を�
   s.appendRow(['伝票番号', '宛先', '品名', '数量', '単価', '日付']);
   s.appendRow(['D-1', '見本商店', 'ノート', 1, 100, '']);
   run();
-  assert.equal(pdfs()[0].getName(), '納品書_D-1.pdf');
-  assert.equal(folder().getName(), '納品書の置き場');
-  assert.match(pdfs()[0].getBlob()._source, /<h1>納品書<\/h1>[\s\S]*架空の会社/);
+  assert.equal(pdfs()[0].name, '納品書_D-1.pdf');
+  assert.equal(folder().name, '納品書の置き場');
+  assert.match(pdfs()[0].blob._source, /<h1>納品書<\/h1>[\s\S]*架空の会社/);
 });
 
 test('設定の値がおかしいときは、日本語で知らせて何もしない（項目名だけで、値は出さない）', () => {
@@ -359,4 +361,34 @@ test('VERSION と CHANGELOG.md の一番上の版が同じ。引き継ぎ書に�
   assert.ok(v.some((r) => r[0] === '帳票 PDF の一括作成（pdf-batch）' && r[1] === top && r[2] === '見本・納品物'));
   assert.ok(v.some((r) => r[0] === 'スキーマの版：pdfBatch' && r[1] === '1'));
   assert.ok(v.some((r) => r[0] === '設定：失敗の通知先' && r[1] === 'ops@example.com'));
+});
+
+test('フォルダがゴミ箱に入っていたら、新しいフォルダを作ってそこに作る', () => {
+  const { env, folder, run } = setup();
+  env.context.setupPdfBatchSample();
+  run();
+  const oldId = folder().id;
+  env.Drive.trash(oldId);
+  env.context.runPdfBatch(); // 作成記録があるので 0 件。フォルダは作り直す
+  assert.notEqual(env.PropertiesService.dump().PDF_BATCH_FOLDER_ID, oldId);
+});
+
+test('ファイル名に「\'」があっても、同じ名前の検索が壊れない（「\\」はファイル名にするときに「_」にする）', () => {
+  const { env, ss, pdfs, run } = setup();
+  const s = ss.insertSheet('明細');
+  s.appendRow(['見積番号', '宛先', '品名', '数量', '単価', '日付']);
+  s.appendRow(["Q'1\\a", '見本商店', 'ノート', 1, 100, '']);
+  run();
+  ss.getSheetByName('作成記録').deleteRows(2, 1);
+  run();
+  assert.equal(pdfs().length, 1, '同じ名前を見つけて、作り直さない');
+  assert.equal(pdfs()[0].name, "お見積書_Q'1_a.pdf");
+  assert.ok(env.Drive.calls.some((c) => c.method === 'list' && c.params.q.includes("name = 'お見積書_Q\\'1_a.pdf'")));
+});
+
+test('appsscript.json で Drive API（v3）を使い、DriveApp は使わない', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'appsscript.json'), 'utf8'));
+  assert.deepEqual(manifest.dependencies.enabledAdvancedServices, [{ userSymbol: 'Drive', serviceId: 'drive', version: 'v3' }]);
+  const code = fs.readFileSync(path.join(DIR, 'main.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/DriveApp/.test(code));
 });

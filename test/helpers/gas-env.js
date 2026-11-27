@@ -16,6 +16,7 @@ const { createMailApp } = require('../mocks/mail-app');
 const { createCacheService } = require('../mocks/cache-service');
 const { createUtilities, createSession } = require('../mocks/utilities');
 const { createDriveApp } = require('../mocks/drive-app');
+const { createDriveApi } = require('../mocks/drive-api');
 
 const SRC_DIR = path.join(__dirname, '..', '..', 'src');
 
@@ -50,6 +51,7 @@ function createGasEnv(options) {
   const Utilities = createUtilities();
   const Session = createSession(opts.timeZone);
   const DriveApp = createDriveApp();
+  const Drive = createDriveApi(); // 詳細サービス Drive API v3
 
   const sandbox = {
     console,
@@ -62,7 +64,8 @@ function createGasEnv(options) {
     CacheService,
     Utilities,
     Session,
-    DriveApp
+    DriveApp,
+    Drive
   };
   const context = vm.createContext(sandbox);
   const baseKeys = new Set(Object.keys(sandbox));
@@ -91,6 +94,7 @@ function createGasEnv(options) {
     MailApp,
     CacheService,
     DriveApp,
+    Drive,
     /** 次に動くトリガーを発火させる（時計もその時刻まで進む） */
     fireNext() {
       LockService.newExecution(); // トリガーで動くのは別の実行

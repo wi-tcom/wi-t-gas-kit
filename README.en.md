@@ -25,6 +25,7 @@ Rather than scaffolding or feature snippets, this kit focuses on operational par
 | Example | Description | Status |
 |---------|-------------|--------|
 | [CSV reconciliation](examples/csv-reconcile/README.en.md) | Match a books sheet against an imported CSV by invoice number and write the result to a sheet (run from the menu) | Implemented (partly verified on GAS: E1–E5, E7, E8 passed; E6 not yet; see [results](docs/manual-check.md), Japanese) |
+| [Batch PDF documents](examples/pdf-batch/README.en.md) | One quotation PDF per row into a folder the script creates; resumable, settings sheet, upgrade steps (version 1.0.0) | Implemented (Node tests only; not yet verified on GAS; probe P0 done) |
 
 ## Installation
 

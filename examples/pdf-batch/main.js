@@ -6,6 +6,9 @@
  * 件数が多いときは WitGas.resume で区切って続きを動かす。実行は WitGas.guard で包む。
  * 先方ごとに変える値は「設定」シートに置く（WitGas.settings）。データの形の移行は WitGas.migrate。
  *
+ * PDF は HTML から作り、Drive API（詳細サービス v3）で保存する。DriveApp は drive.file の権限では使えないため
+ * （2026-11-27 の実機確認 P0）。drive.file では、このスクリプトが作ったフォルダとファイルにしか触れない。
+ *
  * 使う部品：src/ の version.js・lock.js・resume.js・runlog.js・notify.js・guard.js・handover.js・settings.js・migrate.js
  *
  * © 2026 wi-t.com Inc.
@@ -107,7 +110,7 @@ function runPdfBatch() {
       var rows = table.slice(1);
       var records = pdfBatchRecordSheet_(ss, s);
       var done = pdfBatchDoneNumbers_(records);
-      var folder = pdfBatchFolder_(s);
+      var folderId = pdfBatchFolder_(s);
       var tz = Session.getScriptTimeZone();
 
       var r = WitGas.resume.run({
@@ -122,9 +125,14 @@ function runPdfBatch() {
           if (!rec.valid) { counts.invalid++; return; }
           var fileName = pdfBatchFileName_(s, rec.number);
           // 途中で止まって作成記録に書けなかったときのために、同じ名前のファイルがあれば作らずにそれを記録する（上書きしない）
-          var existing = folder.getFilesByName(fileName);
-          var file = existing.hasNext() ? existing.next() : folder.createFile(pdfBatchRender_(s, rec, fileName));
-          records.appendRow([pdfBatchCell_(rec.number), new Date(), file.getId(), pdfBatchCell_(fileName)]);
+          var fileId = pdfBatchFindFile_(folderId, fileName);
+          if (!fileId) {
+            fileId = Drive.Files.create(
+              { name: fileName, parents: [folderId], mimeType: 'application/pdf' },
+              pdfBatchRender_(s, rec, fileName)
+            ).id;
+          }
+          records.appendRow([pdfBatchCell_(rec.number), new Date(), fileId, pdfBatchCell_(fileName)]);
           done[rec.number] = true;
           counts.created++;
         }
@@ -418,21 +426,36 @@ function pdfBatchDoneNumbers_(sheet) {
   return done;
 }
 
-/** PDF のフォルダ（スクリプトが作ったもの。なければ作って ID をスクリプトのプロパティに置く） */
+/**
+ * PDF のフォルダの ID（スクリプトが作ったもの。なければ作って ID をスクリプトのプロパティに置く）。
+ * ゴミ箱に入っている・見えないときは作り直す。
+ */
 function pdfBatchFolder_(s) {
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty(PDF_BATCH.folderProperty);
   if (id) {
     try {
-      var f = DriveApp.getFolderById(id);
-      if (typeof f.isTrashed !== 'function' || !f.isTrashed()) return f;
+      var f = Drive.Files.get(id, { fields: 'id,trashed' });
+      if (f && !f.trashed) return f.id;
     } catch (e) {
       // 消された・見えない。作り直す
     }
   }
-  var folder = DriveApp.createFolder(s['PDF のフォルダ名']);
-  props.setProperty(PDF_BATCH.folderProperty, folder.getId());
-  return folder;
+  var folder = Drive.Files.create({ name: s['PDF のフォルダ名'], mimeType: 'application/vnd.google-apps.folder' });
+  props.setProperty(PDF_BATCH.folderProperty, folder.id);
+  return folder.id;
+}
+
+/** フォルダの中に、同じ名前のファイル（ゴミ箱を除く）があれば、その ID */
+function pdfBatchFindFile_(folderId, name) {
+  var q = "name = '" + pdfBatchQuote_(name) + "' and '" + pdfBatchQuote_(folderId) + "' in parents and trashed = false";
+  var files = Drive.Files.list({ q: q, fields: 'files(id,name)' }).files || [];
+  return files.length ? files[0].id : null;
+}
+
+/** Drive API の検索の文字の中で、\ と ' を逃がす */
+function pdfBatchQuote_(v) {
+  return String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 /** セルに書く文字：式として読まれないようにする */
