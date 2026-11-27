@@ -12,7 +12,7 @@ var WitGas = WitGas || {};
 WitGas.migrate = (function () {
   'use strict';
 
-  var VERSION = '0.3.0';
+  var VERSION = '0.4.0';
   var PROPERTY_PREFIX = 'WitGas.schema:';
   var LOG_PREFIX = '[WitGas.migrate] ';
 

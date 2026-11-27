@@ -8,4 +8,4 @@
  */
 var WitGas = WitGas || {};
 
-WitGas.version = '0.3.0';
+WitGas.version = '0.4.0';

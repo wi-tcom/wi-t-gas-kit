@@ -12,6 +12,13 @@
  *   .clasp.json                見本のフォルダに .clasp.json があれば（rootDir は "." にする）
  *
  * そのあと dist/<見本の名前>/ で `npx @google/clasp push` する。
+ *
+ * 見本のフォルダに bundle.json があるときは、先方の既存のプロジェクトに「1 つだけ足す」ファイルを作る：
+ *   { "file": "wit-inspect.js", "exports": "WIT_INSPECT", "entry": "entry.js" }
+ *   - parts.json の部品と main.js を、1 つの関数の中に閉じ込める（先方のグローバルの WitGas を上書きしない）
+ *   - main.js の最後で exports に渡すものを var WIT_INSPECT_API のように用意しておき、それを返す
+ *   - entry.js（先方のエディタから実行するトップレベルの関数）をその後ろに足す
+ *   - appsscript.json は出さない（先方の appsscript.json を置き換えないため）
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -28,6 +35,14 @@ function build(name, outRoot) {
   const parts = JSON.parse(fs.readFileSync(path.join(exampleDir, 'parts.json'), 'utf8'));
   const outDir = path.join(outRoot || path.join(ROOT, 'dist'), name);
   fs.rmSync(outDir, { recursive: true, force: true });
+
+  const bundlePath = path.join(exampleDir, 'bundle.json');
+  if (fs.existsSync(bundlePath)) {
+    const b = JSON.parse(fs.readFileSync(bundlePath, 'utf8'));
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, b.file), bundle(exampleDir, parts, b));
+    return { outDir, files: [b.file] };
+  }
   fs.mkdirSync(path.join(outDir, 'witgas'), { recursive: true });
 
   const written = [];
@@ -55,7 +70,26 @@ function build(name, outRoot) {
   return { outDir, files: written };
 }
 
-module.exports = { build };
+/** 部品と main.js を 1 つの関数に閉じ込めた 1 ファイルの中身 */
+function bundle(exampleDir, parts, b) {
+  const read = (p) => fs.readFileSync(p, 'utf8');
+  const chunks = [];
+  chunks.push('/**\n * このファイルは npm run example:build で作ったもの。中身は examples/' + path.basename(exampleDir) +
+    ' と src/ の部品（' + parts.join('・') + '）。\n * 部品は下の関数の中だけで使い、先方のグローバルの WitGas には触らない。\n *\n * © 2026 wi-t.com Inc.\n */');
+  chunks.push('var ' + b.exports + ' = (function () {');
+  chunks.push('var WitGas = {};');
+  for (const part of parts) {
+    const src = path.join(ROOT, 'src', part);
+    if (!fs.existsSync(src)) throw new Error('parts.json lists a missing part: ' + part);
+    chunks.push('// ---- src/' + part + ' ----\n' + read(src));
+  }
+  chunks.push('// ---- main.js ----\n' + read(path.join(exampleDir, 'main.js')));
+  chunks.push('return ' + b.exports + '_API;\n})();');
+  chunks.push('// ---- entry.js ----\n' + read(path.join(exampleDir, b.entry)));
+  return chunks.join('\n\n') + '\n';
+}
+
+module.exports = { build, bundle };
 
 if (require.main === module) {
   try {

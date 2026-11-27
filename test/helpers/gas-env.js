@@ -37,6 +37,7 @@ function createConsole() {
  * @param {string[]} [options.files] 読み込む src のファイル名（既定は src/*.js をすべて、名前順）
  * @param {string[]} [options.prelude] src より先に実行するコード（読み込み順の確認用）
  * @param {string[]} [options.extra] src のあとに読み込むファイル（リポジトリからの相対パス。見本のソースなど）
+ * @param {Array<{name: string, code: string}>} [options.sources] そのあとに読み込むコード（ビルドしたファイルなど）
  */
 function createGasEnv(options) {
   const opts = options || {};
@@ -80,6 +81,9 @@ function createGasEnv(options) {
   for (const rel of opts.extra || []) {
     const full = path.join(SRC_DIR, '..', rel);
     vm.runInContext(fs.readFileSync(full, 'utf8'), context, { filename: full });
+  }
+  for (const src of opts.sources || []) {
+    vm.runInContext(src.code, context, { filename: src.name });
   }
 
   return {
