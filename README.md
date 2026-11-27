@@ -24,7 +24,7 @@ GAS（Google Apps Script）を「先方が安心して使い続けられる」�
 
 | 見本 | 内容 | 状態 |
 |------|------|------|
-| [CSV照合](examples/csv-reconcile/README.md) | 会計シートと取り込んだ CSV を請求番号で照合し、結果をシートに出す（メニューから実行） | 実装済み（実機確認：一部済み。E1〜E5・E7・E8 は合格、E6 は未。[結果](docs/manual-check.md#結果の記録)） |
+| [CSV照合](examples/csv-reconcile/README.md) | 会計シートと取り込んだ CSV を請求番号で照合し、結果をシートに出す（メニューから実行）。設定シート・版上げの手順つき（版 1.0.0） | 実装済み（実機確認：一部済み。E1〜E5・E7・E8 は合格、E6 は未。[結果](docs/manual-check.md#結果の記録)） |
 | [帳票 PDF の一括作成](examples/pdf-batch/README.md) | 明細の 1 行を 1 枚の「お見積書」の PDF にし、スクリプトが作ったフォルダにまとめる。区切って続き・設定シート・版上げの手順つき（版 1.0.0） | 実装済み（Node のテストのみ。実機確認は未。P0 の下調べは済み） |
 
 ## 入れ方
@@ -534,6 +534,7 @@ function writeHandover() {   // スクリプトエディタから実行する
 | `settings` | — | `[{name, value, note?, secret?}]`。 |
 | `stopSteps` | — | 止め方の手順（文字の配列）。 |
 | `app` | — | `{name, version}`。見本・納品物の名前と版（`main.js` の `VERSION`）。 |
+| `triggers` | `true` | `false` ならトリガーの一覧を読まず、「出していない」と書く。トリガーを使わず `script.scriptapp` の権限を持たない見本向け（部品集 0.3.0 から）。 |
 | `inspect` | 書き先 | 構成を書くスプレッドシート（オブジェクトか ID の配列）。 |
 | `headers` | `false` | 各シートの 1 行目（見出し）も書く。1 行目が見出しでないシートがあると、業務データが引き継ぎ書に載るので、既定はオフ。 |
 
@@ -591,7 +592,7 @@ WitGas.migrate.needed({ key: 'pdfBatch', steps: STEPS }); // まだ動いてい�
 
 ## 部品の版
 
-- 部品集の版は `WitGas.version`（いまは `0.2.0`）。各部品も同じ番号の `VERSION` を持ちます（`WitGas.lock.VERSION` など）。
+- 部品集の版は `WitGas.version`（いまは `0.3.0`）。各部品も同じ番号の `VERSION` を持ちます（`WitGas.lock.VERSION` など）。
 - 版を上げるときは、`src/` のファイルを入れ替えるだけです。部品は手で直さないでください（先方ごとの手直しは見本の `main.js` に書く）。
 - 引き継ぎ書の「版」の欄に、入っている部品と版が出ます。部品集の版と違う部品には印がつくので、入れ替え忘れに気づけます。
 - 考え方は [docs/design/versioning.md](docs/design/versioning.md) にあります。

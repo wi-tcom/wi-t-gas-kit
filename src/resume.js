@@ -331,7 +331,7 @@ WitGas.resume = (function () {
 
   return {
     run: run,
-    VERSION: '0.2.0',
+    VERSION: '0.3.0',
     get: get,
     cleanup: cleanup,
     DEFAULT_BUDGET_MS: DEFAULT_BUDGET_MS,

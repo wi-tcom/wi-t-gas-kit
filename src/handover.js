@@ -52,7 +52,7 @@ WitGas.handover = (function () {
       versions: collectVersions_(cfg.app, props, propertyKeys),
       scriptId: safe_(function () { return scriptApp.getScriptId(); }, notes, 'スクリプト ID'),
       timeZone: safe_(function () { return Session.getScriptTimeZone(); }, notes, 'タイムゾーン'),
-      triggers: collectTriggers_(scriptApp, resumeTriggers, notes),
+      triggers: cfg.triggers ? collectTriggers_(scriptApp, resumeTriggers, notes) : 'skipped',
       scopes: collectScopes_(scriptApp, cfg.scopes, notes),
       properties: collectProperties_(props, propertyKeys),
       sheets: cfg.inspect.map(function (ss) {
@@ -80,6 +80,7 @@ WitGas.handover = (function () {
    * @param {Array<{name: string, value: *, note?: string, secret?: boolean}>} [opts.settings] 設定値。secret なら値を伏せる
    * @param {string[]} [opts.stopSteps] 止め方（順番に書く）
    * @param {{name: string, version: string}} [opts.app] 見本・納品物の名前と版（VERSION）
+   * @param {boolean} [opts.triggers=true] false ならトリガーの一覧を読まない（script.scriptapp の権限を持たない見本向け）
    * @param {Object} [opts.properties] / {Object} [opts.scriptApp] 差し替えるときだけ
    * @return {{sheetName: string, rows: number, notes: string[]}}
    */
@@ -249,7 +250,9 @@ WitGas.handover = (function () {
     blank();
     add(['■ トリガー', 'この引き継ぎ書を作った人が作ったトリガーだけが出ます。動き終わった 1 回だけのトリガー（トリガーの画面で「無効」）も並びます。時間主導型の時刻はトリガーの画面で確かめてください。']);
     add(['関数', '種類', '起動元', 'ID', '備考']);
-    if (info.triggers === null) {
+    if (info.triggers === 'skipped') {
+      add(['（出していない：この見本・納品物はトリガーを使わないため、一覧を読む権限を持たない）']);
+    } else if (info.triggers === null) {
       add(['（読めなかった）']);
     } else if (info.triggers.length === 0) {
       add(['（なし）']);
@@ -340,6 +343,9 @@ WitGas.handover = (function () {
     if (!Array.isArray(stopSteps) || !stopSteps.every(isText_)) {
       throw new TypeError(where + 'opts.stopSteps must be an array of strings');
     }
+    if (opts.triggers !== undefined && typeof opts.triggers !== 'boolean') {
+      throw new TypeError(where + 'opts.triggers must be a boolean');
+    }
     if (opts.app !== undefined && (!opts.app || !isText_(opts.app.name) || !isText_(opts.app.version))) {
       throw new TypeError(where + 'opts.app must be {name, version}');
     }
@@ -368,6 +374,7 @@ WitGas.handover = (function () {
       stopSteps: stopSteps,
       inspect: inspect,
       app: opts.app ? { name: opts.app.name, version: opts.app.version } : null,
+      triggers: opts.triggers !== false,
       properties: opts.properties,
       scriptApp: opts.scriptApp
     };
@@ -437,7 +444,7 @@ WitGas.handover = (function () {
 
   return {
     collect: collect,
-    VERSION: '0.2.0',
+    VERSION: '0.3.0',
     write: write,
     DEFAULT_SHEET_NAME: DEFAULT_SHEET_NAME
   };

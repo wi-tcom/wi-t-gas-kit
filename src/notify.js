@@ -190,7 +190,7 @@ WitGas.notify = (function () {
 
   return {
     failure: failure,
-    VERSION: '0.2.0',
+    VERSION: '0.3.0',
     validateOptions: validateOptions,
     DEFAULT_THROTTLE_MS: DEFAULT_THROTTLE_MS,
     MAX_THROTTLE_MS: MAX_THROTTLE_MS
